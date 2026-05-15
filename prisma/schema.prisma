@@ -1,0 +1,304 @@
+// This is the MediLink Master Data Schema.
+// It defines all core operational entities for the hospital intelligence platform.
+// Run `npx prisma migrate dev --name init` after adding your DATABASE_URL.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// ============================================================
+// CORE IDENTITY MODELS
+// ============================================================
+
+enum AppRole {
+  PATIENT
+  DOCTOR
+  ADMIN
+  NURSE
+  PHARMACIST
+}
+
+// NextAuth standard User model mapped to our internal roles
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String?   @unique
+  password      String?   // Hashed password for Credentials provider
+  emailVerified DateTime?
+  image         String?
+  role          AppRole   @default(PATIENT)
+  department    String?   // e.g., "Cardiology", "Hospital Admin"
+  
+  // Link to specific operational records
+  patientId     String?   @unique
+  patient       Patient?  @relation(fields: [patientId], references: [id])
+  
+  doctorId      String?   @unique
+  doctor        Doctor?   @relation(fields: [doctorId], references: [id])
+
+  accounts      Account[]
+  sessions      Session[]
+  
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+model Account {
+  id                 String  @id @default(cuid())
+  userId             String
+  type               String
+  provider           String
+  providerAccountId  String
+  refresh_token      String?  @db.Text
+  access_token       String?  @db.Text
+  expires_at         Int?
+  token_type         String?
+  scope              String?
+  id_token           String?  @db.Text
+  session_state      String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+model Patient {
+  id          String   @id @default(cuid())
+  name        String
+  dob         DateTime
+  phone       String   @unique
+  email       String?
+  abhaId      String?  @unique // National ABHA health ID
+  bloodGroup  String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  user        User?
+  visits      Visit[]
+  labReports  LabReport[]
+  messages    Message[]
+  blockchain  BlockchainRecord[]
+}
+
+model Doctor {
+  id                  String   @id @default(cuid())
+  name                String
+  specialization      String
+  department          String
+  consultationsToday  Int      @default(0)
+  isOnBreak           Boolean  @default(false)
+  createdAt           DateTime @default(now())
+
+  // Relations
+  user                User?
+  visits              Visit[]
+}
+
+// ============================================================
+// VISIT / OPERATIONAL FLOW
+// ============================================================
+
+model Visit {
+  id            String      @id @default(cuid())
+  patientId     String
+  doctorId      String
+  status        VisitStatus @default(WAITING)
+  reason        String?     // Chief complaint at check-in
+  queuePosition Int
+  checkInAt     DateTime    @default(now())
+  consultedAt   DateTime?
+  completedAt   DateTime?
+  waitTime      Int?        // In minutes (calculated)
+  isLate        Boolean     @default(false)
+  isCritical    Boolean     @default(false)
+  vitals        Json?       // e.g., { bp: "120/80", hr: 80, temp: 98.6, spo2: 98 }
+
+  // Relations
+  patient       Patient      @relation(fields: [patientId], references: [id])
+  doctor        Doctor       @relation(fields: [doctorId], references: [id])
+  clinicalNote  ClinicalNote?
+  labReports    LabReport[]
+  billingClaim  BillingClaim?
+
+  @@index([status])
+  @@index([doctorId, status])
+}
+
+enum VisitStatus {
+  WAITING
+  CONSULTING
+  COMPLETED
+  NO_SHOW
+  CANCELLED
+}
+
+// ============================================================
+// AI SCRIBE — CLINICAL DOCUMENTATION
+// ============================================================
+
+model ClinicalNote {
+  id             String   @id @default(cuid())
+  visitId        String   @unique
+  rawTranscript  String   // The raw doctor voice input
+  
+  // SOAP Structure
+  subjective     String?
+  objective      String?
+  assessment     String?
+  plan           String?
+  
+  // Structured Medications List
+  medications    Json?    // Array of { drugName, dosage, frequency, duration }
+  
+  // Compliance & Status
+  status         String   @default("DRAFT")
+  requiresPhysicianSignature Boolean @default(true)
+  pharmacyStatus String   @default("PENDING") // PENDING, PREPARING, READY, DISPENSED
+  
+  createdAt      DateTime @default(now())
+
+  // Relations
+  visit          Visit    @relation(fields: [visitId], references: [id])
+}
+
+// ============================================================
+// LAB REPORTS — WITH AI TRANSLATION
+// ============================================================
+
+model LabReport {
+  id           String         @id @default(cuid())
+  patientId    String
+  visitId      String?
+  testName     String
+  rawData      Json           // Original lab values as JSON
+  plainEnglish String?        // AI-translated explanation
+  severity     ReportSeverity @default(NORMAL)
+  recommendation String?
+  isViewed     Boolean        @default(false)
+  createdAt    DateTime       @default(now())
+
+  // Relations
+  patient      Patient        @relation(fields: [patientId], references: [id])
+  visit        Visit?         @relation(fields: [visitId], references: [id])
+}
+
+enum ReportSeverity {
+  NORMAL
+  LOW
+  HIGH
+  CRITICAL
+}
+
+// ============================================================
+// HOSPITAL COMMUNICATIONS LOG
+// ============================================================
+
+model Message {
+  id             String          @id @default(cuid())
+  patientId      String
+  channel        MessageChannel  @default(APP)
+  content        String
+  deliveryStatus DeliveryStatus  @default(SENT)
+  sentAt         DateTime        @default(now())
+
+  // Relations
+  patient        Patient         @relation(fields: [patientId], references: [id])
+}
+
+enum MessageChannel {
+  WHATSAPP
+  SMS
+  APP
+  EMAIL
+}
+
+enum DeliveryStatus {
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+// ============================================================
+// FINANCE — BILLING & CLAIM INTELLIGENCE
+// ============================================================
+
+model BillingClaim {
+  id              String      @id @default(cuid())
+  visitId         String      @unique
+  amount          Float
+  status          ClaimStatus @default(PENDING)
+  rejectionRisk   Int?        @default(0) // 0-100 risk score from AI
+  missingDocs     Json?       // List of missing documents flagged
+  tpaName         String?
+  submittedAt     DateTime?
+  resolvedAt      DateTime?
+  createdAt       DateTime    @default(now())
+
+  // Relations
+  visit           Visit       @relation(fields: [visitId], references: [id])
+}
+
+enum ClaimStatus {
+  PENDING
+  SUBMITTED
+  APPROVED
+  REJECTED
+  FLAGGED // Pre-emptive correction needed
+}
+
+// ============================================================
+// BLOCKCHAIN HEALTH LOCKER
+// ============================================================
+
+model BlockchainRecord {
+  id          String   @id @default(cuid())
+  patientId   String
+  recordType  String   // e.g., "PRESCRIPTION", "LAB_REPORT", "SCAN"
+  recordHash  String   // Simulated on-chain hash
+  ipfsCid     String?  // IPFS content ID for decentralized storage
+  sharedWith  Json?    // Array of doctor IDs who have consent
+  accessLog   Json?    // Array of {accessedBy, timestamp} objects
+  createdAt   DateTime @default(now())
+
+  // Relations
+  patient     Patient  @relation(fields: [patientId], references: [id])
+}
+
+// ============================================================
+// OPERATIONAL INTELLIGENCE
+// ============================================================
+
+model HospitalMetric {
+  id                String   @id @default(cuid())
+  date              DateTime @default(now())
+  totalPatients     Int      @default(0)
+  avgWaitTime       Int      @default(0) // In minutes
+  noShowCount       Int      @default(0)
+  consultationCount Int      @default(0)
+  revenueProtected  Float    @default(0)
+  experienceScore   Int      @default(100) // 0-100 daily operational score
+
+  @@index([date])
+}
