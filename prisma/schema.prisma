@@ -20,6 +20,7 @@ enum AppRole {
   ADMIN
   NURSE
   PHARMACIST
+  CASHIER
 }
 
 // NextAuth standard User model mapped to our internal roles
@@ -249,6 +250,7 @@ model BillingClaim {
   visitId         String      @unique
   amount          Float
   status          ClaimStatus @default(PENDING)
+  paymentStatus   String      @default("UNPAID") // UNPAID, PAID
   rejectionRisk   Int?        @default(0) // 0-100 risk score from AI
   missingDocs     Json?       // List of missing documents flagged
   tpaName         String?
@@ -284,6 +286,24 @@ model BlockchainRecord {
 
   // Relations
   patient     Patient  @relation(fields: [patientId], references: [id])
+}
+
+// ============================================================
+// IMMUTABLE AUDIT TRAIL (HIPAA COMPLIANCE)
+// ============================================================
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  userId    String   // User who performed the action
+  userName  String?
+  role      String?
+  patientId String?  // Optional, if the action relates to a specific patient
+  action    String   // e.g., "VIEW_CLINICAL_NOTE", "DISPENSE_MEDS"
+  details   Json?
+  timestamp DateTime @default(now())
+
+  @@index([patientId])
+  @@index([timestamp])
 }
 
 // ============================================================

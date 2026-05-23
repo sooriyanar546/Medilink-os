@@ -11,6 +11,7 @@ export default function AdminMode() {
   const [billingClaims, setBillingClaims] = useState([]);
   const [isLoadingClaims, setIsLoadingClaims] = useState(true);
   const [isSimulatingClaim, setIsSimulatingClaim] = useState(false);
+  const [auditLogs, setAuditLogs] = useState([]);
 
   const fetchClaims = async () => {
     try {
@@ -54,11 +55,25 @@ export default function AdminMode() {
     }
   };
 
+  const fetchAuditLogs = async () => {
+    try {
+      const res = await fetch('/api/audit');
+      const data = await res.json();
+      if (Array.isArray(data)) setAuditLogs(data);
+    } catch (e) {
+      console.error(e);
+    }
+  };
+
   useEffect(() => {
     initializePusher();
     fetchClaims();
+    fetchAuditLogs();
     loadQueue();
-    const interval = setInterval(loadQueue, 10000);
+    const interval = setInterval(() => {
+      loadQueue();
+      fetchAuditLogs();
+    }, 10000);
     return () => clearInterval(interval);
   }, []);
 
@@ -270,6 +285,34 @@ export default function AdminMode() {
                   </p>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* Immutable Audit Trail */}
+          <div className="card" style={{ marginTop: 'var(--space-6)', backgroundColor: '#f8fafc' }}>
+            <div className="card-header" style={{ marginBottom: 'var(--space-4)' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#334155' }}>
+                <ShieldAlert size={18} /> Immutable Audit Trail
+              </div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', maxHeight: '300px', overflowY: 'auto' }}>
+              {auditLogs.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: 'var(--space-4)' }}>No logs captured yet.</div>
+              ) : (
+                auditLogs.map((log) => (
+                  <div key={log.id} style={{ display: 'flex', flexDirection: 'column', padding: '12px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #e2e8f0', borderLeft: '3px solid #64748b' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '4px' }}>
+                      <span style={{ fontSize: '0.875rem', fontWeight: 600, color: '#0f172a' }}>{log.action}</span>
+                      <span style={{ fontSize: '0.75rem', color: '#94a3b8' }}>
+                        {new Date(log.timestamp).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                      </span>
+                    </div>
+                    <div style={{ fontSize: '0.875rem', color: '#475569' }}>
+                      <span style={{ fontWeight: 500 }}>{log.userName}</span> ({log.role}) accessed patient data.
+                    </div>
+                  </div>
+                ))
+              )}
             </div>
           </div>
 

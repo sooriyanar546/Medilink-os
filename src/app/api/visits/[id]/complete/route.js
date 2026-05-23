@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { pusherServer } from '@/lib/pusher';
+import { logAudit } from '@/lib/audit';
 
 // PATCH /api/visits/[id]/complete — Doctor completes a consultation
 // This is the core action that drives the "Sign & Next Patient" flow.
@@ -89,6 +90,16 @@ export async function PATCH(request, { params }) {
         revenueProtected: 1500,
       },
     });
+
+    // Write to Immutable Audit Trail
+    await logAudit(
+      visit.doctorId, 
+      visit.doctor.name,
+      'DOCTOR',
+      'COMPLETED_CONSULTATION',
+      visit.patientId,
+      { waitTime: completedVisit.waitTime }
+    );
 
     // Trigger pusher event
     await pusherServer.trigger('hospital-queue', 'queue-updated', {

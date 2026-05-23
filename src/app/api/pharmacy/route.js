@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { pusherServer } from '@/lib/pusher';
+import { logAudit } from '@/lib/audit';
 
 export async function GET() {
   try {
@@ -37,6 +38,16 @@ export async function PATCH(request) {
       data: { pharmacyStatus },
       include: { visit: { include: { patient: true } } }
     });
+
+    // Write to Immutable Audit Trail
+    await logAudit(
+      'pharmacy@medilink.com', 
+      'Dr. Gregory (Pharmacy)',
+      'PHARMACIST',
+      `PHARMACY_${pharmacyStatus}`,
+      updatedNote.visit.patientId,
+      { noteId }
+    );
 
     // Notify patient
     if (pharmacyStatus === 'READY') {

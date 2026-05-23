@@ -10,6 +10,7 @@ import DoctorMode from '@/components/modes/DoctorMode';
 import AdminMode from '@/components/modes/AdminMode';
 import NurseMode from '@/components/modes/NurseMode';
 import PharmacyMode from '@/components/modes/PharmacyMode';
+import CashierMode from '@/components/modes/CashierMode';
 import { PageTransition } from '@/components/ui/MotionKit';
 import { Loader2 } from 'lucide-react';
 
@@ -19,6 +20,7 @@ const modeComponents = {
   admin: <AdminMode />,
   nurse: <NurseMode />,
   pharmacist: <PharmacyMode />,
+  cashier: <CashierMode />,
 };
 
 export default function DashboardContainer() {

@@ -101,7 +101,7 @@ async function main() {
     },
   });
 
-  // 5b. Create Pharmacist User (NextAuth)
+  // 5b. Create Pharmacist and Cashier Users
   const pharmacyHash = await bcrypt.hash('pharmacy123', 10);
   await prisma.user.upsert({
     where: { email: 'pharmacy@medilink.com' },
@@ -112,6 +112,19 @@ async function main() {
       password: pharmacyHash,
       role: 'PHARMACIST',
       department: 'Pharmacy',
+    },
+  });
+
+  const cashierHash = await bcrypt.hash('cashier123', 10);
+  await prisma.user.upsert({
+    where: { email: 'cashier@medilink.com' },
+    update: { password: cashierHash },
+    create: {
+      name: 'Sarah (Billing)',
+      email: 'cashier@medilink.com',
+      password: cashierHash,
+      role: 'CASHIER',
+      department: 'Billing & Insurance',
     },
   });
 
