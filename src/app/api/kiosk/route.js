@@ -5,19 +5,45 @@ import { logAudit } from '@/lib/audit';
 
 export async function POST(request) {
   try {
-    const { phone } = await request.json();
+    const { phone, registerNew = false, name, dob, bloodGroup } = await request.json();
 
     if (!phone) {
       return NextResponse.json({ error: 'Phone number is required' }, { status: 400 });
     }
 
     // Lookup patient by phone
-    const patient = await prisma.patient.findUnique({
+    let patient = await prisma.patient.findUnique({
       where: { phone }
     });
 
     if (!patient) {
-      return NextResponse.json({ error: 'Patient not found. Please visit front desk.' }, { status: 404 });
+      if (registerNew) {
+        if (!name || !dob) {
+          return NextResponse.json({ error: 'Name and Date of Birth are required for registration.' }, { status: 400 });
+        }
+        
+        // Create new patient record
+        patient = await prisma.patient.create({
+          data: {
+            name,
+            phone,
+            dob: new Date(dob),
+            bloodGroup: bloodGroup || 'O+',
+          }
+        });
+
+        // Write registration to audit log
+        await logAudit(
+          patient.id,
+          patient.name,
+          'PATIENT_SELF_SERVICE',
+          'PATIENT_REGISTERED_KIOSK',
+          patient.id,
+          { phone }
+        );
+      } else {
+        return NextResponse.json({ error: 'Patient not found. Select "Register as New" to proceed.' }, { status: 404 });
+      }
     }
 
     // Assign to a random doctor (or round-robin) for the kiosk flow

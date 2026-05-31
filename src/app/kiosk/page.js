@@ -9,6 +9,9 @@ export default function KioskPage() {
   const [status, setStatus] = useState('IDLE'); // IDLE, LOADING, SUCCESS, ERROR
   const [visitInfo, setVisitInfo] = useState(null);
   const [errorMessage, setErrorMessage] = useState('');
+  const [newName, setNewName] = useState('');
+  const [newDob, setNewDob] = useState('1995-01-01');
+  const [bloodGroup, setBloodGroup] = useState('O+');
 
   const handleKeyPress = (digit) => {
     if (phone.length < 15) {
@@ -131,10 +134,142 @@ export default function KioskPage() {
           )}
 
           {status === 'ERROR' && (
-            <motion.div key="error" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} style={{ textAlign: 'center', backgroundColor: '#7f1d1d', padding: '48px', borderRadius: '24px' }}>
+            <motion.div key="error" initial={{ opacity: 0, scale: 0.9 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }} style={{ textAlign: 'center', backgroundColor: '#7f1d1d', padding: '48px', borderRadius: '24px', width: '100%', maxWidth: '480px' }}>
               <Fingerprint size={64} color="#fca5a5" style={{ margin: '0 auto 24px' }} />
               <h2 style={{ fontSize: '2rem', marginBottom: '16px', color: '#fef2f2' }}>Identification Failed</h2>
-              <p style={{ fontSize: '1.25rem', color: '#fecdd3' }}>{errorMessage}</p>
+              <p style={{ fontSize: '1.25rem', color: '#fecdd3', marginBottom: '24px' }}>{errorMessage}</p>
+              {errorMessage.includes('not found') && (
+                <button
+                  onClick={() => setStatus('REGISTRATION')}
+                  style={{
+                    width: '100%',
+                    padding: '16px',
+                    fontSize: '1.2rem',
+                    backgroundColor: '#10b981',
+                    border: 'none',
+                    borderRadius: '16px',
+                    color: 'white',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    transition: 'all 0.2s'
+                  }}
+                >
+                  Register as a New Patient
+                </button>
+              )}
+            </motion.div>
+          )}
+
+          {status === 'REGISTRATION' && (
+            <motion.div 
+              key="registration"
+              initial={{ opacity: 0, scale: 0.95 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0 }}
+              style={{ width: '100%', maxWidth: '480px' }}
+            >
+              <h2 style={{ fontSize: '2.5rem', fontWeight: 700, marginBottom: '8px' }}>New Registration</h2>
+              <p style={{ fontSize: '1.25rem', color: '#94a3b8', marginBottom: '32px' }}>Fill in your basic medical details</p>
+              
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '20px', marginBottom: '32px' }}>
+                {/* Name */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '8px', fontWeight: 600 }}>FULL NAME</label>
+                  <input 
+                    type="text"
+                    value={newName}
+                    onChange={(e) => setNewName(e.target.value)}
+                    placeholder="Enter full name"
+                    style={{ width: '100%', padding: '16px', fontSize: '1.1rem', backgroundColor: '#1e293b', border: '2px solid #334155', borderRadius: '12px', color: 'white', outline: 'none' }}
+                  />
+                </div>
+
+                {/* DOB */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '8px', fontWeight: 600 }}>DATE OF BIRTH</label>
+                  <input 
+                    type="date"
+                    value={newDob}
+                    onChange={(e) => setNewDob(e.target.value)}
+                    style={{ width: '100%', padding: '16px', fontSize: '1.1rem', backgroundColor: '#1e293b', border: '2px solid #334155', borderRadius: '12px', color: 'white', outline: 'none' }}
+                  />
+                </div>
+
+                {/* Blood Group */}
+                <div>
+                  <label style={{ display: 'block', fontSize: '0.875rem', color: '#94a3b8', marginBottom: '8px', fontWeight: 600 }}>BLOOD GROUP</label>
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '8px' }}>
+                    {['O+', 'O-', 'A+', 'A-', 'B+', 'B-', 'AB+', 'AB-'].map(bg => (
+                      <button
+                        key={bg}
+                        type="button"
+                        onClick={() => setBloodGroup(bg)}
+                        style={{
+                          padding: '12px',
+                          fontSize: '1rem',
+                          backgroundColor: bloodGroup === bg ? 'var(--color-primary)' : '#1e293b',
+                          border: bloodGroup === bg ? 'none' : '2px solid #334155',
+                          borderRadius: '8px',
+                          color: 'white',
+                          cursor: 'pointer',
+                          fontWeight: 'bold',
+                          transition: 'all 0.1s'
+                        }}
+                      >
+                        {bg}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Submit Buttons */}
+              <div style={{ display: 'flex', gap: '16px' }}>
+                <button 
+                  onClick={() => setStatus('IDLE')}
+                  style={{ flex: 1, padding: '20px', fontSize: '1.1rem', backgroundColor: '#334155', color: 'white', border: 'none', borderRadius: '16px', cursor: 'pointer', fontWeight: 'bold' }}
+                >
+                  Cancel
+                </button>
+                <button 
+                  onClick={async () => {
+                    if (!newName || !newDob) return;
+                    setStatus('LOADING');
+                    try {
+                      const res = await fetch('/api/kiosk', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                          phone,
+                          registerNew: true,
+                          name: newName,
+                          dob: newDob,
+                          bloodGroup
+                        })
+                      });
+                      const data = await res.json();
+                      if (res.ok) {
+                        setVisitInfo(data);
+                        setStatus('SUCCESS');
+                        setTimeout(() => {
+                          setStatus('IDLE');
+                          setPhone('');
+                          setNewName('');
+                          setVisitInfo(null);
+                        }, 10000);
+                      } else {
+                        setErrorMessage(data.error || 'Registration failed');
+                        setStatus('ERROR');
+                      }
+                    } catch (e) {
+                      setErrorMessage('Network error during registration.');
+                      setStatus('ERROR');
+                    }
+                  }}
+                  disabled={!newName || !newDob}
+                  style={{ flex: 2, padding: '20px', fontSize: '1.1rem', backgroundColor: (newName && newDob) ? '#10b981' : '#334155', color: 'white', border: 'none', borderRadius: '16px', cursor: (newName && newDob) ? 'pointer' : 'not-allowed', fontWeight: 'bold' }}
+                >
+                  Submit & Check-in
+                </button>
+              </div>
             </motion.div>
           )}
 

@@ -2,22 +2,28 @@
 
 import React from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Search, Bell, Settings, User, HeartPulse, ShieldAlert, LogOut } from 'lucide-react';
+import { Search, Bell, Settings, User, HeartPulse, ShieldAlert, LogOut, Activity, Pill, CreditCard, Menu } from 'lucide-react';
 import { PulseDot } from '@/components/ui/MotionKit';
 
 const modes = [
   { id: 'patient', label: 'Patient', icon: User, color: '#0284c7' },
   { id: 'doctor', label: 'Doctor', icon: HeartPulse, color: '#059669' },
+  { id: 'nurse', label: 'Nurse', icon: Activity, color: '#f59e0b' },
+  { id: 'pharmacist', label: 'Pharmacy', icon: Pill, color: '#ec4899' },
+  { id: 'cashier', label: 'Billing', icon: CreditCard, color: '#0f766e' },
   { id: 'admin', label: 'Admin', icon: ShieldAlert, color: '#7c3aed' },
 ];
 
 const avatarGradients = {
   patient: 'linear-gradient(135deg, #0284c7, #38bdf8)',
   doctor: 'linear-gradient(135deg, #059669, #34d399)',
+  nurse: 'linear-gradient(135deg, #f59e0b, #fbbf24)',
+  pharmacist: 'linear-gradient(135deg, #ec4899, #f472b6)',
+  cashier: 'linear-gradient(135deg, #0f766e, #14b8a6)',
   admin: 'linear-gradient(135deg, #7c3aed, #a78bfa)',
 };
 
-export default function Topbar({ activeMode, setActiveMode, session, onSignOut }) {
+export default function Topbar({ activeMode, setActiveMode, session, onSignOut, isMobileNavOpen, setIsMobileNavOpen }) {
   const role = session?.user?.role || activeMode;
   const userName = session?.user?.name || 'Guest';
   const userDept = session?.user?.department || '';
@@ -26,8 +32,50 @@ export default function Topbar({ activeMode, setActiveMode, session, onSignOut }
   return (
     <header className="topbar">
 
-      {/* Premium Mode Toggle */}
-      <div style={{
+      {/* Hamburger Trigger for Mobile */}
+      <button 
+        className="mobile-hamburger icon-btn"
+        onClick={() => setIsMobileNavOpen(!isMobileNavOpen)}
+        style={{ marginRight: '8px' }}
+      >
+        <Menu size={20} />
+      </button>
+
+      {/* Segmented Mode Switcher Dropdown (Mobile) */}
+      <div className="mobile-switcher">
+        <select
+          value={activeMode}
+          onChange={(e) => setActiveMode(e.target.value)}
+          style={{
+            padding: '6px 32px 6px 12px',
+            borderRadius: 'var(--radius-lg)',
+            border: '1px solid var(--border-light)',
+            backgroundColor: 'var(--color-surface)',
+            color: modes.find(m => m.id === activeMode)?.color || 'var(--color-text-main)',
+            fontFamily: 'var(--font-family)',
+            fontSize: 'var(--font-size-sm)',
+            fontWeight: 600,
+            outline: 'none',
+            cursor: 'pointer',
+            appearance: 'none',
+            backgroundImage: `url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3e%3cpolyline points='6 9 12 15 18 9'%3e%3c/polyline%3e%3c/svg%3e")`,
+            backgroundRepeat: 'no-repeat',
+            backgroundPosition: 'right 10px center',
+            backgroundSize: '16px',
+            minWidth: '120px',
+            boxShadow: 'var(--shadow-sm)',
+          }}
+        >
+          {modes.map(mode => (
+            <option key={mode.id} value={mode.id} style={{ color: mode.color }}>
+              {mode.label} Mode
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {/* Premium Segmented Switcher (Desktop-Only) */}
+      <div className="desktop-switcher" style={{
         display: 'flex',
         gap: '3px',
         backgroundColor: 'var(--color-background)',

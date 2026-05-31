@@ -827,3 +827,221 @@ body {
   background: currentColor;
   animation: pulse-ring 1.5s cubic-bezier(0, 0, 0.2, 1) infinite;
 }
+
+/* ================================================================
+   19. RESPONSIVE DESIGN SYSTEM (MOBILE & TABLET OPTIMIZATION)
+   ================================================================ */
+
+/* Tablet Optimization (Screen Width < 1024px) */
+@media (max-width: 1024px) {
+  :root {
+    --space-6: 1.25rem;
+    --space-8: 1.5rem;
+  }
+
+  .topbar {
+    padding: 0 var(--space-4);
+  }
+
+  .topbar-search {
+    max-width: 200px !important;
+  }
+}
+
+/* Phone Optimization (Screen Width < 768px) */
+@media (max-width: 768px) {
+  :root {
+    --font-size-base: 0.875rem;
+    --font-size-3xl: 2rem;
+    --font-size-2xl: 1.25rem;
+    --font-size-xl: 1.0625rem;
+    --space-4: 0.75rem;
+    --space-5: 1rem;
+    --space-6: 1rem;
+    --space-8: 1rem;
+    --topbar-height: 56px;
+  }
+
+  .app-container {
+    flex-direction: column;
+  }
+
+  /* Slide-out Sidebar Drawer for Mobile */
+  .sidebar {
+    position: fixed;
+    top: 0;
+    left: -240px;
+    bottom: 0;
+    height: 100vh;
+    z-index: 1000;
+    transition: transform var(--transition-slow);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .sidebar.open {
+    transform: translateX(240px);
+  }
+
+  /* Tap-to-dismiss overlay background */
+  .sidebar-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(15, 23, 42, 0.4);
+    backdrop-filter: blur(4px);
+    z-index: 999;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity var(--transition-base);
+  }
+
+  .sidebar-overlay.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  /* Hide Search on Mobile Viewports */
+  .topbar-search {
+    display: none !important;
+  }
+
+  /* Topbar Padding and Layout Adjustments */
+  .topbar {
+    padding: 0 var(--space-4);
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .topbar-actions {
+    gap: 4px !important;
+  }
+
+  .user-profile {
+    border-left: none !important;
+    padding-left: 0 !important;
+  }
+
+  .user-info {
+    display: none !important; /* Hide full user name details to avoid overlap */
+  }
+
+  /* Force dashboard grids to stack into a single column */
+  .dashboard-grid {
+    grid-template-columns: 1fr !important;
+    gap: var(--space-4) !important;
+  }
+
+  .content-area {
+    padding: var(--space-4) !important;
+    height: calc(100vh - var(--topbar-height));
+  }
+
+  /* Adjust stat layout cards */
+  .stat-grid {
+    grid-template-columns: 1fr 1fr !important;
+    gap: 8px !important;
+    margin-bottom: var(--space-4) !important;
+  }
+
+  .stat-value {
+    font-size: 1.5rem !important;
+  }
+
+  .card {
+    padding: var(--space-4) !important;
+    border-radius: var(--radius-lg) !important;
+  }
+
+  /* Form & UI Touch Target Optimization */
+  input, select, textarea, button, .btn {
+    min-height: 40px; /* Touch target minimum height */
+  }
+
+  .btn {
+    padding: var(--space-2) var(--space-3) !important;
+  }
+
+  /* Responsive layout adjustments for grid splits inside panels */
+  .grid-2col {
+    grid-template-columns: 1fr !important;
+    gap: var(--space-4) !important;
+  }
+
+  /* Optimize doctor voice log transcript area height */
+  textarea {
+    height: 120px !important;
+  }
+}
+
+/* Developer Switcher Responsive Display Utilities */
+.desktop-switcher {
+  display: flex;
+}
+
+.mobile-switcher {
+  display: none;
+}
+
+.mobile-hamburger {
+  display: none !important;
+}
+
+@media (max-width: 1024px) {
+  .desktop-switcher {
+    display: none !important;
+  }
+  .mobile-switcher {
+    display: block !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .mobile-hamburger {
+    display: flex !important;
+  }
+}
+
+/* Triage Grid Split (1fr 2fr layout) */
+.triage-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: var(--space-6);
+  height: calc(100vh - 120px);
+}
+
+@media (max-width: 768px) {
+  .triage-grid {
+    grid-template-columns: 1fr !important;
+    height: auto !important;
+    gap: var(--space-4) !important;
+  }
+}
+
+/* Doctor Workspace Grid (1fr 2fr 1fr layout) */
+.doctor-grid {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: var(--space-6);
+}
+
+@media (max-width: 1024px) {
+  .doctor-grid {
+    grid-template-columns: 1fr 1.5fr !important;
+  }
+  .doctor-right-column {
+    display: none !important;
+  }
+}
+
+@media (max-width: 768px) {
+  .doctor-grid {
+    grid-template-columns: 1fr !important;
+    gap: var(--space-4) !important;
+  }
+  .doctor-right-column {
+    display: none !important;
+  }
+}
+
+
+
+

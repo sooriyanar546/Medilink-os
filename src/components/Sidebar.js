@@ -3,11 +3,11 @@
 import React from 'react';
 import { Activity, LayoutDashboard, Users, Stethoscope, MessageSquare, GitBranchPlus, BarChart3, Database, FileText, Lock } from 'lucide-react';
 
-export default function Sidebar({ activeMode }) {
+export default function Sidebar({ activeMode, isOpen }) {
   
   if (activeMode === 'patient') {
     return (
-      <aside className="sidebar">
+      <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="brand-logo">
             <Activity />
@@ -32,7 +32,7 @@ export default function Sidebar({ activeMode }) {
 
   if (activeMode === 'doctor') {
     return (
-      <aside className="sidebar">
+      <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
         <div className="sidebar-header">
           <div className="brand-logo">
             <Activity />
@@ -53,7 +53,7 @@ export default function Sidebar({ activeMode }) {
 
   // Admin Mode (Default/Enterprise)
   return (
-    <aside className="sidebar">
+    <aside className={`sidebar ${isOpen ? 'open' : ''}`}>
       <div className="sidebar-header">
         <div className="brand-logo">
           <Activity />

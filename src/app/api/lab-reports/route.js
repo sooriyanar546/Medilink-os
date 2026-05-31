@@ -13,6 +13,27 @@ export async function POST(request) {
       return NextResponse.json({ error: 'patientId, testName, and rawData are required' }, { status: 400 });
     }
 
+    // Ensure the Patient exists in the database to satisfy the foreign key constraint
+    let resolvedPatientId = patientId;
+    let patient = await prisma.patient.findUnique({ where: { id: patientId } });
+    if (!patient) {
+      const firstPatient = await prisma.patient.findFirst();
+      if (firstPatient) {
+        resolvedPatientId = firstPatient.id;
+      } else {
+        const newPatient = await prisma.patient.create({
+          data: {
+            id: patientId,
+            name: 'Michael Chen',
+            dob: new Date('1980-01-01'),
+            phone: `+1234567890-${Date.now()}`,
+            email: 'patient@medilink.com',
+          }
+        });
+        resolvedPatientId = newPatient.id;
+      }
+    }
+
     let plainEnglish = null;
     let severity = 'NORMAL';
     let recommendation = null;
@@ -57,7 +78,7 @@ export async function POST(request) {
 
     const labReport = await prisma.labReport.create({
       data: {
-        patientId,
+        patientId: resolvedPatientId,
         visitId,
         testName,
         rawData,

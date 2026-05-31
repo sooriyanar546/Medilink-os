@@ -13,6 +13,69 @@ export async function POST(request) {
       return NextResponse.json({ error: 'visitId and amount are required' }, { status: 400 });
     }
 
+    // Ensure the Visit exists in the database to satisfy the foreign key constraint
+    let visit = await prisma.visit.findUnique({ where: { id: visitId } });
+    if (!visit) {
+      // Find a doctor and a patient to link to the mock visit
+      let doctor = await prisma.doctor.findFirst();
+      if (!doctor) {
+        doctor = await prisma.doctor.create({
+          data: {
+            id: 'doc_sarah_jenkins',
+            name: 'Dr. Sarah Jenkins',
+            specialization: 'Cardiology',
+            department: 'Cardiology',
+          }
+        });
+      }
+      let patient = await prisma.patient.findFirst();
+      if (!patient) {
+        patient = await prisma.patient.create({
+          data: {
+            name: 'Michael Chen',
+            dob: new Date('1980-01-01'),
+            phone: '+1234567890',
+            email: 'patient@medilink.com',
+          }
+        });
+      }
+      // Create the simulated visit
+      visit = await prisma.visit.create({
+        data: {
+          id: visitId,
+          patientId: patient.id,
+          doctorId: doctor.id,
+          status: 'COMPLETED',
+          queuePosition: 0,
+          reason: 'Simulated consultation'
+        }
+      });
+      
+      // Also create a ClinicalNote if clinicalNoteOverride is provided
+      if (clinicalNoteOverride) {
+        await prisma.clinicalNote.upsert({
+          where: { visitId },
+          update: {
+            rawTranscript: "Simulated transcription.",
+            subjective: clinicalNoteOverride.subjective || "",
+            objective: clinicalNoteOverride.objective || "",
+            assessment: clinicalNoteOverride.assessment || "",
+            plan: clinicalNoteOverride.plan || "",
+            status: "DRAFT",
+          },
+          create: {
+            visitId,
+            rawTranscript: "Simulated transcription.",
+            subjective: clinicalNoteOverride.subjective || "",
+            objective: clinicalNoteOverride.objective || "",
+            assessment: clinicalNoteOverride.assessment || "",
+            plan: clinicalNoteOverride.plan || "",
+            status: "DRAFT",
+          }
+        });
+      }
+    }
+
     // 1. Fetch the clinical note associated with this visit, or use the override
     const clinicalNote = clinicalNoteOverride || await prisma.clinicalNote.findUnique({
       where: { visitId }

@@ -3,8 +3,10 @@
 import React, { useState, useEffect } from 'react';
 import { Pill, CheckCircle2, Clock, AlertTriangle, PackageOpen, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { useHospitalStore } from '@/store/useHospitalStore';
 
 export default function PharmacyMode() {
+  const { showToast } = useHospitalStore();
   const [prescriptions, setPrescriptions] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
 
@@ -40,14 +42,21 @@ export default function PharmacyMode() {
 
   const updateStatus = async (noteId, status) => {
     try {
-      await fetch('/api/pharmacy', {
+      showToast(`Transitioning prescription to ${status}...`, "info");
+      const res = await fetch('/api/pharmacy', {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ noteId, pharmacyStatus: status })
       });
-      fetchPrescriptions();
+      if (res.ok) {
+        fetchPrescriptions();
+        showToast(`Prescription status updated to: ${status}`, "success");
+      } else {
+        showToast("Failed to update prescription.", "error");
+      }
     } catch (e) {
       console.error(e);
+      showToast("Error updating prescription status.", "error");
     }
   };
 

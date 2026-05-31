@@ -12,6 +12,10 @@ import NurseMode from '@/components/modes/NurseMode';
 import PharmacyMode from '@/components/modes/PharmacyMode';
 import CashierMode from '@/components/modes/CashierMode';
 import { PageTransition } from '@/components/ui/MotionKit';
+import { ErrorBoundary } from '@/components/ui/ErrorBoundary';
+import Toast from '@/components/ui/Toast';
+import { useHospitalStore } from '@/store/useHospitalStore';
+import { AnimatePresence } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 
 const modeComponents = {
@@ -26,9 +30,39 @@ const modeComponents = {
 export default function DashboardContainer() {
   const { data: session, status } = useSession();
   const router = useRouter();
+  const { toast, clearToast } = useHospitalStore();
 
   // Default mode from the logged-in user's role
   const [activeMode, setActiveMode] = useState('patient');
+  const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
+  const [isOffline, setIsOffline] = useState(false);
+
+  // Service Worker Registration and Network Online/Offline Listeners
+  useEffect(() => {
+    if ('serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js')
+        .then((registration) => {
+          console.log('MediLink Service Worker registered with scope:', registration.scope);
+        })
+        .catch((err) => {
+          console.error('Service Worker registration failed:', err);
+        });
+    }
+
+    const handleOnline = () => setIsOffline(false);
+    const handleOffline = () => setIsOffline(true);
+
+    if (typeof window !== 'undefined') {
+      setIsOffline(!window.navigator.onLine);
+      window.addEventListener('online', handleOnline);
+      window.addEventListener('offline', handleOffline);
+    }
+
+    return () => {
+      window.removeEventListener('online', handleOnline);
+      window.removeEventListener('offline', handleOffline);
+    };
+  }, []);
 
   // Redirect to login if not authenticated
   useEffect(() => {
@@ -43,6 +77,11 @@ export default function DashboardContainer() {
       setActiveMode(session.user.role);
     }
   }, [session]);
+
+  const handleSetActiveMode = (mode) => {
+    setActiveMode(mode);
+    setIsMobileNavOpen(false);
+  };
 
   // Show loading screen while session is being determined
   if (status === 'loading' || status === 'unauthenticated') {
@@ -61,17 +100,54 @@ export default function DashboardContainer() {
 
   return (
     <div className="app-container">
-      <Sidebar activeMode={activeMode} />
+      {isOffline && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          zIndex: 9999,
+          backgroundColor: 'rgba(217, 119, 6, 0.92)',
+          backdropFilter: 'blur(12px)',
+          color: 'white',
+          textAlign: 'center',
+          padding: '10px 16px',
+          fontSize: '13px',
+          fontWeight: 600,
+          boxShadow: '0 2px 10px rgba(0,0,0,0.15)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '8px',
+          animation: 'fadeIn 0.3s ease-out'
+        }}>
+          <span>⚠️ Connection Lost: Offline Mode Active. MediLink is running off cached hospital profiles. Live sync will resume automatically.</span>
+        </div>
+      )}
+      <AnimatePresence>
+        {toast && (
+          <Toast message={toast.message} type={toast.type} onClose={clearToast} />
+        )}
+      </AnimatePresence>
+      <div 
+        className={`sidebar-overlay ${isMobileNavOpen ? 'visible' : ''}`} 
+        onClick={() => setIsMobileNavOpen(false)} 
+      />
+      <Sidebar activeMode={activeMode} isOpen={isMobileNavOpen} setIsOpen={setIsMobileNavOpen} />
       <main className="main-wrapper">
         <Topbar
           activeMode={activeMode}
-          setActiveMode={setActiveMode}
+          setActiveMode={handleSetActiveMode}
           session={session}
           onSignOut={() => signOut({ callbackUrl: '/login' })}
+          isMobileNavOpen={isMobileNavOpen}
+          setIsMobileNavOpen={setIsMobileNavOpen}
         />
         <div className="content-area">
           <PageTransition mode={activeMode}>
-            {modeComponents[activeMode]}
+            <ErrorBoundary onReset={() => window.location.reload()}>
+              {modeComponents[activeMode]}
+            </ErrorBoundary>
           </PageTransition>
         </div>
       </main>

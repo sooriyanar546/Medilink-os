@@ -1,24 +1,19 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useHospitalQueue } from '@/hooks/useHospitalQueue';
 import { useHospitalStore } from '@/store/useHospitalStore';
 import { Activity, HeartPulse, Thermometer, Droplet, User, CheckCircle2, ChevronRight, Loader2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
 export default function NurseMode() {
-  const { queue, loadQueue, isLoadingQueue } = useHospitalStore();
+  const { queue, loadQueue, isLoadingQueue } = useHospitalQueue();
+  const { showToast } = useHospitalStore();
   const [selectedPatient, setSelectedPatient] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [vitals, setVitals] = useState({ bp: '', hr: '', temp: '', spo2: '' });
 
-  useEffect(() => {
-    loadQueue();
-    // Refresh queue every 10 seconds if not using pusher
-    const interval = setInterval(loadQueue, 10000);
-    return () => clearInterval(interval);
-  }, []);
-
-  const waitingPatients = queue.filter(v => v.status === 'WAITING' && !v.vitals);
+  const waitingPatients = queue.filter(v => v.status === 'waiting' && !v.vitals);
 
   const handleSelectPatient = (patient) => {
     setSelectedPatient(patient);
@@ -29,7 +24,7 @@ export default function NurseMode() {
     e.preventDefault();
     setIsSubmitting(true);
     try {
-      const res = await fetch(`/api/visits/${selectedPatient.id}/vitals`, {
+      const res = await fetch(`/api/visits/${selectedPatient.visitId}/vitals`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(vitals),
@@ -37,16 +32,20 @@ export default function NurseMode() {
       if (res.ok) {
         setSelectedPatient(null);
         loadQueue(); // Refresh to remove them from the 'Needs Vitals' list
+        showToast("Triage vitals captured successfully!", "success");
+      } else {
+        showToast("Failed to save vitals.", "error");
       }
     } catch (err) {
       console.error(err);
+      showToast("Error updating patient vitals.", "error");
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 'var(--space-6)', height: 'calc(100vh - 120px)' }}>
+    <div className="triage-grid">
       
       {/* LEFT: Intake Queue */}
       <div className="card" style={{ display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>

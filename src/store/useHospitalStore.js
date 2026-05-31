@@ -15,6 +15,7 @@ export const useHospitalStore = create((set, get) => ({
   isLoadingMetrics: false,
   isLoadingMessages: false,
   lastSyncAt: null,
+  toast: null,
 
   // ── OPTION A: Load queue from database ──────────────────────
   loadQueue: async () => {
@@ -36,6 +37,8 @@ export const useHospitalStore = create((set, get) => ({
         queuePosition: v.queuePosition,
         bloodGroup: v.patient?.bloodGroup || '—',
         doctorId: v.doctorId,
+        vitals: v.vitals,
+        patient: v.patient,
       }));
 
       set({ queue, isLoadingQueue: false, lastSyncAt: new Date() });
@@ -169,4 +172,16 @@ export const useHospitalStore = create((set, get) => ({
     get().loadQueue();
     get().loadMetrics();
   },
+
+  // ── Toast Notifications ───────────────────────────────────────
+  showToast: (message, type = 'success') => {
+    set({ toast: { message, type } });
+    setTimeout(() => {
+      const current = get().toast;
+      if (current && current.message === message) {
+        set({ toast: null });
+      }
+    }, 4000);
+  },
+  clearToast: () => set({ toast: null }),
 }));

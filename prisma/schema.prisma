@@ -95,11 +95,12 @@ model Patient {
   updatedAt   DateTime @updatedAt
 
   // Relations
-  user        User?
-  visits      Visit[]
-  labReports  LabReport[]
-  messages    Message[]
-  blockchain  BlockchainRecord[]
+  user            User?
+  visits          Visit[]
+  labReports      LabReport[]
+  messages        Message[]
+  blockchain      BlockchainRecord[]
+  snoozedReminders SnoozedReminder[]
 }
 
 model Doctor {
@@ -321,4 +322,33 @@ model HospitalMetric {
   experienceScore   Int      @default(100) // 0-100 daily operational score
 
   @@index([date])
+}
+
+// ============================================================
+// PRODUCTION NOTIFICATIONS & TASK SCHEDULERS (PHASE 6)
+// ============================================================
+
+model WebhookLog {
+  id          String   @id @default(cuid())
+  provider    String   // e.g., "TWILIO"
+  payload     Json     // Raw incoming webhook JSON from Twilio
+  processed   Boolean  @default(false)
+  error       String?  // Stack trace if processing fails
+  createdAt   DateTime @default(now())
+
+  @@index([processed])
+}
+
+model SnoozedReminder {
+  id             String   @id @default(cuid())
+  patientId      String
+  medicationName String   // e.g., "Amlodipine 5mg"
+  visitId        String?
+  scheduledAt    DateTime // Timestamp when the snooze expires
+  status         String   @default("PENDING") // PENDING, EXPIRED, COMPLETED, CANCELLED
+  channel        String   @default("WHATSAPP") // WHATSAPP, SMS
+  createdAt      DateTime @default(now())
+
+  patient        Patient  @relation(fields: [patientId], references: [id])
+  @@index([status, scheduledAt])
 }

@@ -6,11 +6,21 @@
     "dev": "next dev",
     "build": "prisma generate && next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "mobile:init": "cap init MediLink com.medilink.clinical --web-dir=public",
+    "mobile:add-ios": "npm install @capacitor/ios && npx cap add ios",
+    "mobile:add-android": "npm install @capacitor/android && npx cap add android",
+    "mobile:sync": "npx cap sync",
+    "mobile:open-ios": "npx cap open ios",
+    "mobile:open-android": "npx cap open android"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.0",
     "@auth/prisma-adapter": "^2.11.2",
+    "@capacitor/core": "^6.0.0",
+    "@capacitor/dialog": "^6.0.0",
+    "@capacitor/haptics": "^6.0.0",
+    "@capacitor/local-notifications": "^6.0.0",
     "@neondatabase/serverless": "^1.1.0",
     "@prisma/adapter-neon": "^7.8.0",
     "@prisma/adapter-pg": "^7.8.0",
