@@ -17,6 +17,8 @@ import Toast from '@/components/ui/Toast';
 import { useHospitalStore } from '@/store/useHospitalStore';
 import { AnimatePresence } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
+import { setupFetchInterceptor, syncOfflineMutations, getOfflineMutations } from '@/lib/offlineSync';
+import { triggerNativeHaptic } from '@/lib/native';
 
 const modeComponents = {
   patient: <PatientMode />,
@@ -36,6 +38,7 @@ export default function DashboardContainer() {
   const [activeMode, setActiveMode] = useState('patient');
   const [isMobileNavOpen, setIsMobileNavOpen] = useState(false);
   const [isOffline, setIsOffline] = useState(false);
+  const [pendingSyncCount, setPendingSyncCount] = useState(0);
 
   // Service Worker Registration and Network Online/Offline Listeners
   useEffect(() => {
@@ -49,18 +52,58 @@ export default function DashboardContainer() {
         });
     }
 
-    const handleOnline = () => setIsOffline(false);
-    const handleOffline = () => setIsOffline(true);
+    const store = useHospitalStore.getState();
+
+    // Hook standard web-fetch interceptor
+    setupFetchInterceptor(store.showToast, triggerNativeHaptic);
+
+    // Dynamic queue pending count calculations
+    const updatePendingCount = async () => {
+      const pending = await getOfflineMutations();
+      setPendingSyncCount(pending.length);
+    };
+
+    updatePendingCount();
+
+    // Trigger sync once on boot if already online
+    if (typeof window !== 'undefined' && window.navigator.onLine) {
+      syncOfflineMutations(store.showToast, triggerNativeHaptic).then(() => {
+        store.syncAll();
+      });
+    }
+
+    const handleOnline = async () => {
+      setIsOffline(false);
+      await syncOfflineMutations(store.showToast, triggerNativeHaptic);
+      store.syncAll();
+    };
+
+    const handleOffline = () => {
+      setIsOffline(true);
+      triggerNativeHaptic('warning');
+    };
+
+    const handleQueueChanged = async () => {
+      await updatePendingCount();
+    };
+
+    const handleSyncCompleted = () => {
+      store.syncAll();
+    };
 
     if (typeof window !== 'undefined') {
       setIsOffline(!window.navigator.onLine);
       window.addEventListener('online', handleOnline);
       window.addEventListener('offline', handleOffline);
+      window.addEventListener('offline-sync-queue-changed', handleQueueChanged);
+      window.addEventListener('offline-sync-completed', handleSyncCompleted);
     }
 
     return () => {
       window.removeEventListener('online', handleOnline);
       window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('offline-sync-queue-changed', handleQueueChanged);
+      window.removeEventListener('offline-sync-completed', handleSyncCompleted);
     };
   }, []);
 
@@ -121,7 +164,11 @@ export default function DashboardContainer() {
           gap: '8px',
           animation: 'fadeIn 0.3s ease-out'
         }}>
-          <span>⚠️ Connection Lost: Offline Mode Active. MediLink is running off cached hospital profiles. Live sync will resume automatically.</span>
+          <span>
+            ⚠️ Connection Lost: Offline Mode Active. {pendingSyncCount > 0 
+              ? `🔥 ${pendingSyncCount} clinical updates securely saved in local IndexedDB outbox.` 
+              : 'MediLink is running off cached hospital profiles.'} Live sync will resume automatically upon reconnection.
+          </span>
         </div>
       )}
       <AnimatePresence>
