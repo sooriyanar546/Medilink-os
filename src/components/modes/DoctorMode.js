@@ -2,10 +2,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic, MicOff, AlertCircle, Sparkles, BrainCircuit, Activity, Clock, ShieldAlert, History, ActivitySquare, HeartPulse, Loader2 } from 'lucide-react';
+import { Mic, MicOff, AlertCircle, Sparkles, BrainCircuit, Activity, Clock, ShieldAlert, History, ActivitySquare, HeartPulse, Loader2, CheckCircle2 } from 'lucide-react';
 import { useHospitalStore } from '@/store/useHospitalStore';
 import { useHospitalQueue } from '@/hooks/useHospitalQueue';
 import { PulseDot, StatCard, AnimatedCard } from '@/components/ui/MotionKit';
+import { triggerNativeHaptic } from '@/lib/native';
 
 const clinicalTemplates = [
   {
@@ -67,11 +68,208 @@ export default function DoctorMode() {
   const [isProcessingAI, setIsProcessingAI] = useState(false);
   const [structuredNote, setStructuredNote] = useState(null);
   
-  // Voice Scribe State
+  // Voice Scribe State & Advanced Command Orchestrator Stacks
   const [isListening, setIsListening] = useState(false);
+  const [cleanTranscript, setCleanTranscript] = useState("");
+  const [activeVoiceCommand, setActiveVoiceCommand] = useState(null);
+  const [labOrders, setLabOrders] = useState([]);
+  
   const recognitionRef = useRef(null);
+  const cleanTranscriptRef = useRef("");
+  const processedIndexRef = useRef(0);
 
   const codes = structuredNote ? getClinicalCodes(structuredNote) : null;
+
+  useEffect(() => {
+    if (activeVoiceCommand) {
+      const timer = setTimeout(() => {
+        setActiveVoiceCommand(null);
+      }, 3500);
+      return () => clearTimeout(timer);
+    }
+  }, [activeVoiceCommand]);
+
+  const playChime = () => {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const now = ctx.currentTime;
+      
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(830.61, now);
+      gain1.gain.setValueAtTime(0.12, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(659.25, now + 0.08);
+      gain2.gain.setValueAtTime(0.12, now + 0.08);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      
+      osc1.start(now);
+      osc1.stop(now + 0.3);
+      osc2.start(now + 0.08);
+      osc2.stop(now + 0.58);
+    } catch (e) {
+      console.error("Audio chime failed", e);
+    }
+  };
+
+  const checkForVoiceCommands = (segmentText) => {
+    const text = segmentText.trim();
+    if (!text) return;
+    
+    const hasWakeWord = /medilink|doctor command/i.test(text);
+    if (!hasWakeWord) {
+      const baseline = cleanTranscriptRef.current;
+      const updated = baseline ? `${baseline.trim()} ${text}.` : `${text}.`;
+      cleanTranscriptRef.current = updated;
+      setCleanTranscript(updated);
+      setTranscript(updated);
+      return;
+    }
+    
+    // Parse voice commands
+    // 1. Prescribe command
+    const prescribeMatch = text.match(/(?:medilink|doctor command)\s+prescribe\s+([\w\s\-]+?)\s+(\d+(?:\s*(?:mg|g|ml|mcg|caps|tabs))?)\s+([\w\s]+?)(?:\s+for\s+(\d+\s*days?))?$/i);
+    if (prescribeMatch) {
+      const drugName = prescribeMatch[1].trim();
+      const dosage = prescribeMatch[2].trim();
+      const frequency = prescribeMatch[3].trim();
+      const duration = prescribeMatch[4] ? prescribeMatch[4].trim() : "7 days";
+      
+      const newMed = {
+        drugName: drugName.charAt(0).toUpperCase() + drugName.slice(1),
+        dosage,
+        frequency: frequency.toUpperCase(),
+        duration
+      };
+      
+      const initialNote = {
+        note: {
+          subjective: "Patient interview in progress...",
+          objective: "Observations recorded via ambient speech",
+          assessment: "Consultation in progress",
+          plan: "Treatment plan being formulated",
+          medications: [],
+          status: "DRAFT",
+          requiresPhysicianSignature: true
+        }
+      };
+      
+      setStructuredNote(prev => {
+        const current = prev || initialNote;
+        const existingMeds = current.note?.medications || current.medications || [];
+        const updatedMeds = [...existingMeds, newMed];
+        return {
+          ...current,
+          medications: updatedMeds,
+          note: {
+            ...(current.note || {}),
+            medications: updatedMeds
+          }
+        };
+      });
+      
+      setActiveVoiceCommand({
+        type: 'prescribe',
+        message: `Prescribed ${newMed.drugName} ${newMed.dosage} ${newMed.frequency} for ${newMed.duration}`
+      });
+      
+      playChime();
+      triggerNativeHaptic('success');
+      showToast(`Voice Command: Prescribed ${newMed.drugName}!`, 'success');
+      return;
+    }
+    
+    // 2. Diagnose command
+    const diagnoseMatch = text.match(/(?:medilink|doctor command)\s+diagnose\s+([\w\s\-]+)/i);
+    if (diagnoseMatch) {
+      const condition = diagnoseMatch[1].trim();
+      const capitalizedCondition = condition.charAt(0).toUpperCase() + condition.slice(1);
+      
+      const initialNote = {
+        note: {
+          subjective: "Patient interview in progress...",
+          objective: "Observations recorded via ambient speech",
+          assessment: capitalizedCondition,
+          plan: "Treatment plan being formulated",
+          medications: [],
+          status: "DRAFT",
+          requiresPhysicianSignature: true
+        }
+      };
+      
+      setStructuredNote(prev => {
+        const current = prev || initialNote;
+        return {
+          ...current,
+          assessment: capitalizedCondition,
+          note: {
+            ...(current.note || {}),
+            assessment: capitalizedCondition
+          }
+        };
+      });
+      
+      setActiveVoiceCommand({
+        type: 'diagnose',
+        message: `Diagnosed: ${capitalizedCondition}`
+      });
+      
+      playChime();
+      triggerNativeHaptic('success');
+      showToast(`Voice Command: Diagnosed ${capitalizedCondition}!`, 'success');
+      return;
+    }
+    
+    // 3. Order Lab command
+    const orderLabMatch = text.match(/(?:medilink|doctor command)\s+order\s+lab\s+([\w\s\-]+)/i);
+    if (orderLabMatch) {
+      const test = orderLabMatch[1].trim().toUpperCase();
+      
+      setLabOrders(prev => [...prev, test]);
+      
+      setActiveVoiceCommand({
+        type: 'order_lab',
+        message: `Lab Ordered: ${test}`
+      });
+      
+      playChime();
+      triggerNativeHaptic('success');
+      showToast(`Voice Command: Ordered Lab ${test}!`, 'success');
+      return;
+    }
+    
+    // 4. Sign note command
+    const signMatch = text.match(/(?:medilink|doctor command)\s+sign\s+(?:note|consultation)\s+and\s+next\s+patient/i);
+    if (signMatch) {
+      setActiveVoiceCommand({
+        type: 'sign_off',
+        message: "Signing note and moving to next patient..."
+      });
+      
+      playChime();
+      triggerNativeHaptic('success');
+      handleSignConsultation();
+      return;
+    }
+    
+    // 5. Unrecognized Command
+    setActiveVoiceCommand({
+      type: 'error',
+      message: `Command not recognized: "${text}"`
+    });
+    triggerNativeHaptic('error');
+  };
 
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -83,11 +281,24 @@ export default function DoctorMode() {
         recognition.lang = 'en-US';
 
         recognition.onresult = (event) => {
-          let currentTranscript = '';
-          for (let i = 0; i < event.results.length; i++) {
-            currentTranscript += event.results[i][0].transcript;
+          let interimTranscript = '';
+          
+          for (let i = event.resultIndex; i < event.results.length; i++) {
+            const segmentText = event.results[i][0].transcript;
+            if (event.results[i].isFinal) {
+              if (i >= processedIndexRef.current) {
+                processedIndexRef.current = i + 1;
+                checkForVoiceCommands(segmentText);
+              }
+            } else {
+              interimTranscript += segmentText;
+            }
           }
-          setTranscript(currentTranscript);
+          
+          setTranscript(() => {
+            const clean = cleanTranscriptRef.current;
+            return clean ? `${clean.trim()} ${interimTranscript}`.trim() : interimTranscript.trim();
+          });
         };
 
         recognition.onerror = (event) => {
@@ -119,6 +330,9 @@ export default function DoctorMode() {
         alert("Your browser does not support live voice transcription. Please use Chrome, Edge, or Safari.");
         return;
       }
+      cleanTranscriptRef.current = transcript;
+      setCleanTranscript(transcript);
+      processedIndexRef.current = 0;
       recognitionRef.current.start();
       setIsListening(true);
     }
@@ -153,7 +367,10 @@ export default function DoctorMode() {
     await completeConsultation();
     showToast("Consultation signed and completed!", "success");
     setTranscript("");
+    setCleanTranscript("");
+    cleanTranscriptRef.current = "";
     setStructuredNote(null);
+    setLabOrders([]);
   };
   return (
     <>
@@ -450,6 +667,42 @@ export default function DoctorMode() {
                     </table>
                   </div>
 
+                  {/* Lab Orders Box */}
+                  {labOrders.length > 0 && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0', padding: '12px', marginTop: '4px' }}
+                    >
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: '#166534', display: 'flex', alignItems: 'center', gap: '6px', marginBottom: '8px' }}>
+                        <BrainCircuit size={14} color="#166534" />
+                        ACTIVE LAB ORDERS
+                      </div>
+                      <div style={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                        {labOrders.map((lab, idx) => (
+                          <span 
+                            key={idx} 
+                            style={{ 
+                              backgroundColor: '#d1fae5', 
+                              color: '#065f46', 
+                              border: '1px solid #a7f3d0', 
+                              padding: '4px 10px', 
+                              borderRadius: 'var(--radius-full)', 
+                              fontSize: '11px', 
+                              fontWeight: 600,
+                              display: 'inline-flex',
+                              alignItems: 'center',
+                              gap: '6px'
+                            }}
+                          >
+                            <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#10b981' }} />
+                            {lab}
+                          </span>
+                        ))}
+                      </div>
+                    </motion.div>
+                  )}
+
                   {/* Clinical Coding Box */}
                   <div style={{ backgroundColor: '#f0fdf4', borderRadius: '8px', border: '1px solid #bbf7d0', padding: '12px', display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -519,8 +772,10 @@ export default function DoctorMode() {
           </div>
 
           <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: 'var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', fontStyle: 'italic' }}>
-              Voice commands active: "Next patient", "Order test", "Sign note"
+            <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+              <BrainCircuit size={13} color="var(--color-primary)" />
+              <span style={{ fontWeight: 500 }}>Ambient Command Scribe Active.</span>
+              Try: <code style={{ backgroundColor: 'var(--color-surface-hover)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', color: 'var(--color-primary)', fontWeight: 600 }}>"MediLink, prescribe Ibuprofen 400mg BID"</code> or <code style={{ backgroundColor: 'var(--color-surface-hover)', padding: '2px 6px', borderRadius: '4px', fontFamily: 'monospace', color: 'var(--color-primary)', fontWeight: 600 }}>"order lab CBC"</code>
             </span>
             <button 
               className="btn btn-primary" 
@@ -645,6 +900,60 @@ export default function DoctorMode() {
 
         </div>
       </div>
+
+      {/* Glassmorphic Active Voice Command Confirmation Popover */}
+      <AnimatePresence>
+        {activeVoiceCommand && (
+          <motion.div
+            initial={{ opacity: 0, y: -20, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -10, scale: 0.95 }}
+            transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+            style={{
+              position: 'fixed',
+              top: '24px',
+              right: '24px',
+              zIndex: 9999,
+              background: 'rgba(255, 255, 255, 0.85)',
+              backdropFilter: 'blur(16px)',
+              WebkitBackdropFilter: 'blur(16px)',
+              border: activeVoiceCommand.type === 'error' ? '1px solid rgba(239, 68, 68, 0.3)' : '1px solid rgba(16, 185, 129, 0.3)',
+              borderRadius: '16px',
+              boxShadow: '0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04)',
+              padding: '16px 20px',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '12px',
+              maxWidth: '360px'
+            }}
+          >
+            <div style={{
+              width: '36px',
+              height: '36px',
+              borderRadius: '50%',
+              backgroundColor: activeVoiceCommand.type === 'error' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              flexShrink: 0
+            }}>
+              {activeVoiceCommand.type === 'error' ? (
+                <AlertCircle size={18} color="#ef4444" />
+              ) : (
+                <Sparkles size={18} color="#10b981" />
+              )}
+            </div>
+            <div>
+              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                {activeVoiceCommand.type === 'error' ? 'Voice Command Error' : 'Voice Command Executed'}
+              </div>
+              <div style={{ fontSize: '13px', fontWeight: 500, color: 'var(--color-text-main)', marginTop: '2px' }}>
+                {activeVoiceCommand.message}
+              </div>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </>
   );
 }
