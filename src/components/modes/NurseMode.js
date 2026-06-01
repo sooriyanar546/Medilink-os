@@ -5,6 +5,7 @@ import { useHospitalQueue } from '@/hooks/useHospitalQueue';
 import { useHospitalStore } from '@/store/useHospitalStore';
 import { Activity, HeartPulse, Thermometer, Droplet, User, CheckCircle2, ChevronRight, Loader2, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
+import { triggerNativeHaptic } from '@/lib/native';
 
 export default function NurseMode() {
   const { queue, loadQueue, isLoadingQueue } = useHospitalQueue();
@@ -18,6 +19,7 @@ export default function NurseMode() {
   const handleSelectPatient = (patient) => {
     setSelectedPatient(patient);
     setVitals({ bp: '', hr: '', temp: '', spo2: '' });
+    triggerNativeHaptic('light');
   };
 
   const handleSaveVitals = async (e) => {
@@ -33,12 +35,15 @@ export default function NurseMode() {
         setSelectedPatient(null);
         loadQueue(); // Refresh to remove them from the 'Needs Vitals' list
         showToast("Triage vitals captured successfully!", "success");
+        triggerNativeHaptic('success');
       } else {
         showToast("Failed to save vitals.", "error");
+        triggerNativeHaptic('error');
       }
     } catch (err) {
       console.error(err);
       showToast("Error updating patient vitals.", "error");
+      triggerNativeHaptic('error');
     } finally {
       setIsSubmitting(false);
     }
