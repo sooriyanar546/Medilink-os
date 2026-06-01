@@ -130,9 +130,69 @@ export default function PatientMode() {
     retinopathy: false
   });
 
+  const [showNavigationModal, setShowNavigationModal] = useState(false);
+  const [previewStage, setPreviewStage] = useState(null);
+
+  // Trigger double-tone wayfinding chime when navigation opens or stage changes
+  useEffect(() => {
+    if (showNavigationModal) {
+      playNavChime();
+      try {
+        triggerNativeHaptic('light');
+      } catch (e) {}
+    }
+  }, [previewStage, showNavigationModal]);
+
+  const playNavChime = () => {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const now = ctx.currentTime;
+      
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(523.25, now);
+      gain1.gain.setValueAtTime(0.08, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(659.25, now + 0.08);
+      gain2.gain.setValueAtTime(0.08, now + 0.08);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.5);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      
+      osc1.start(now);
+      osc1.stop(now + 0.3);
+      osc2.start(now + 0.08);
+      osc2.stop(now + 0.58);
+    } catch (e) {
+      console.error("Navigation chime failed", e);
+    }
+  };
+
   // Dynamic visit reason mapping
   const myIndex = queue.findIndex(p => p.id === patientId);
   const myVisit = myIndex !== -1 ? queue[myIndex] : null;
+
+  const getActiveNavStage = () => {
+    if (myIndex === -1) {
+      return 'PHARMACY';
+    }
+    if (!myVisit) return 'ENTRANCE';
+    if (!myVisit.vitals) return 'TRIAGE';
+    if (myIndex === 0 && queue[0].status === 'consulting') return 'ROOM_402_CONSULTING';
+    return 'ROOM_402_WAITING';
+  };
+  
+  const navStage = getActiveNavStage();
+
   const activeReason = (myVisit?.reason || 'General').toLowerCase();
 
   let activeConditionKey = 'general';
@@ -531,6 +591,33 @@ If you would like a personalized clinical meal plan, you can book an appointment
               <div style={{ fontSize: isStressReduction ? '4rem' : '3rem', fontWeight: 700, lineHeight: 1 }}>
                 {isComplete ? 'Done' : isConsulting ? 'In Room' : waitTime} <span style={{ fontSize: '1.25rem', fontWeight: 500, opacity: isDelayed ? 1 : 0.8 }}>{isComplete || isConsulting ? '' : 'mins'}</span>
               </div>
+              {!isComplete && (
+                <button 
+                  onClick={() => {
+                    playNavChime();
+                    triggerNativeHaptic('light');
+                    setShowNavigationModal(true);
+                  }} 
+                  className="btn btn-outline" 
+                  style={{ 
+                    marginTop: '12px',
+                    backgroundColor: isDelayed ? 'rgba(3, 105, 161, 0.1)' : 'rgba(255, 255, 255, 0.2)', 
+                    border: isDelayed ? '1px solid rgba(3, 105, 161, 0.3)' : '1px solid rgba(255, 255, 255, 0.4)',
+                    color: isDelayed ? '#0369a1' : 'white', 
+                    borderRadius: 'var(--radius-full)', 
+                    padding: '6px 14px', 
+                    fontSize: '11px', 
+                    display: 'flex', 
+                    alignItems: 'center', 
+                    gap: '6px',
+                    fontWeight: 600,
+                    cursor: 'pointer',
+                    transition: 'all 0.15s'
+                  }}
+                >
+                  <Navigation size={12} /> Start Indoor Navigation
+                </button>
+              )}
             </div>
             
             <div style={{ textAlign: 'right' }}>
@@ -950,7 +1037,27 @@ If you would like a personalized clinical meal plan, you can book an appointment
               <div className="card-title" style={{ fontSize: isStressReduction ? '1.3rem' : 'var(--font-size-base)' }}><MessageCircle size={20} style={{ marginRight: '8px' }} /> I need help with...</div>
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(140px, 1fr))', gap: 'var(--space-3)' }}>
-              <button onClick={() => showToast("Navigation active! Room 402 is on Floor 4.", "info")} className="btn btn-outline" style={{ justifyContent: 'center', padding: '12px', fontSize: isStressReduction ? '1.1rem' : 'var(--font-size-sm)' }}>Finding Room 402</button>
+              <button 
+                onClick={() => {
+                  playNavChime();
+                  triggerNativeHaptic('light');
+                  setShowNavigationModal(true);
+                }} 
+                className="btn btn-outline" 
+                style={{ 
+                  justifyContent: 'center', 
+                  padding: '12px', 
+                  fontSize: isStressReduction ? '1.1rem' : 'var(--font-size-sm)',
+                  borderColor: 'var(--color-primary)',
+                  color: 'var(--color-primary)',
+                  fontWeight: 600,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '6px'
+                }}
+              >
+                <Navigation size={14} /> Wayfinding Map
+              </button>
               <button onClick={() => showToast("Wheelchair assistance request dispatched to Front Desk.", "success")} className="btn btn-outline" style={{ justifyContent: 'center', padding: '12px', fontSize: isStressReduction ? '1.1rem' : 'var(--font-size-sm)' }}>Wheelchair Request</button>
               <button onClick={() => showToast("Triage Nurse alerted! A support staff will navigate to your seat shortly.", "success")} className="btn btn-outline" style={{ justifyContent: 'center', padding: '12px', fontSize: isStressReduction ? '1.1rem' : 'var(--font-size-sm)' }}>Talk to a Nurse</button>
             </div>
@@ -1451,9 +1558,544 @@ If you would like a personalized clinical meal plan, you can book an appointment
           onMouseEnter={(e) => e.target.style.transform = 'scale(1.05)'}
           onMouseLeave={(e) => e.target.style.transform = 'scale(1)'}
         >
-          {isChatOpen ? <X size={24} /> : <MessageCircle size={24} />}
         </button>
       </div>
+
+      {/* Fullscreen Indoor Spatial Wayfinder HUD Modal */}
+      <AnimatePresence>
+        {showNavigationModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed',
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              backgroundColor: 'rgba(15, 23, 42, 0.75)',
+              backdropFilter: 'blur(8px)',
+              zIndex: 9999,
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: '16px'
+            }}
+          >
+            <motion.div
+              initial={{ y: 50, scale: 0.95, opacity: 0 }}
+              animate={{ y: 0, scale: 1, opacity: 1 }}
+              exit={{ y: 50, scale: 0.95, opacity: 0 }}
+              transition={{ type: 'spring', damping: 25, stiffness: 250 }}
+              style={{
+                width: '100%',
+                maxWidth: '750px',
+                backgroundColor: 'var(--color-surface)',
+                borderRadius: '24px',
+                boxShadow: '0 25px 50px -12px rgba(0, 0, 0, 0.4)',
+                border: '1px solid var(--border-light)',
+                overflow: 'hidden',
+                display: 'flex',
+                flexDirection: 'column',
+                maxHeight: '90vh'
+              }}
+            >
+              {/* Header */}
+              <div style={{
+                padding: '20px 24px',
+                borderBottom: '1px solid var(--border-light)',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                background: 'linear-gradient(to right, rgba(30, 41, 59, 0.02), rgba(30, 41, 59, 0))'
+              }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <h2 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0, color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                      🗺️ MediLink Indoor Wayfinder
+                    </h2>
+                    <span style={{
+                      fontSize: '9px',
+                      backgroundColor: '#dcfce3',
+                      color: '#15803d',
+                      padding: '2px 8px',
+                      borderRadius: '50px',
+                      fontWeight: 700,
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '4px',
+                      animation: 'pulse 2s infinite'
+                    }}>
+                      <span style={{ width: '5px', height: '5px', backgroundColor: '#22c55e', borderRadius: '50%' }}></span>
+                      IPS ACTIVE
+                    </span>
+                  </div>
+                  <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: '4px 0 0 0' }}>
+                    Floor 4 • Cardiorespiratory Wing • Real-Time Spatial Pathing
+                  </p>
+                </div>
+                
+                <button
+                  onClick={() => {
+                    setShowNavigationModal(false);
+                    setPreviewStage(null);
+                  }}
+                  style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    border: 'none',
+                    backgroundColor: 'var(--border-light)',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    cursor: 'pointer',
+                    color: 'var(--color-text-main)',
+                    transition: 'all 0.2s'
+                  }}
+                  onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#e2e8f0'}
+                  onMouseLeave={(e) => e.currentTarget.style.backgroundColor = 'var(--border-light)'}
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {/* SVG Blueprint Board */}
+              <div style={{
+                backgroundColor: '#0f172a',
+                padding: '24px',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                borderBottom: '1px solid var(--border-light)',
+                position: 'relative',
+                overflow: 'hidden',
+                flex: 1
+              }}>
+                <style dangerouslySetInnerHTML={{ __html: `
+                  @keyframes wayfind-crawl {
+                    to {
+                      stroke-dashoffset: -20;
+                    }
+                  }
+                  @keyframes wayfind-locator-pulse {
+                    0% { r: 5; opacity: 0.3; }
+                    50% { r: 15; opacity: 0.7; }
+                    100% { r: 5; opacity: 0.3; }
+                  }
+                  @keyframes wayfind-user-pulse {
+                    0% { r: 6; filter: drop-shadow(0 0 2px #10b981); }
+                    50% { r: 10; filter: drop-shadow(0 0 8px #10b981); }
+                    100% { r: 6; filter: drop-shadow(0 0 2px #10b981); }
+                  }
+                `}} />
+
+                <div style={{
+                  position: 'absolute',
+                  top: '12px',
+                  left: '12px',
+                  color: 'rgba(255,255,255,0.15)',
+                  fontSize: '9px',
+                  fontFamily: 'Courier, monospace',
+                  pointerEvents: 'none'
+                }}>
+                  GRID N-441-A • WING C<br/>
+                  SCALE: 1:120 • IPS SIG: EXCELLENT
+                </div>
+
+                <svg viewBox="0 0 600 360" style={{ width: '100%', height: 'auto', maxWidth: '580px' }}>
+                  {/* Compass Icon */}
+                  <g transform="translate(45, 45)" opacity="0.2">
+                    <circle cx="0" cy="0" r="24" fill="none" stroke="white" strokeWidth="1" strokeDasharray="2 2" />
+                    <line x1="-30" y1="0" x2="30" y2="0" stroke="white" strokeWidth="1" />
+                    <line x1="0" y1="-30" x2="0" y2="30" stroke="white" strokeWidth="1" />
+                    <polygon points="0,-20 5,0 -5,0" fill="#ef4444" />
+                    <polygon points="0,20 5,0 -5,0" fill="white" />
+                    <text x="-4" y="-23" fill="white" fontSize="8" fontWeight="bold">N</text>
+                  </g>
+
+                  {/* Corridor Boundary Outlines (CAD architecture look) */}
+                  <g stroke="#1e293b" strokeWidth="3" fill="none" opacity="0.6">
+                    <path d="M 30,170 L 450,170 L 450,130" />
+                    <path d="M 30,215 L 450,215 L 450,345" strokeWidth="1.5" />
+                    <path d="M 100,170 L 100,30 L 290,30 L 290,170" strokeWidth="1.5" />
+                    <path d="M 140,170 L 140,70" />
+                    <path d="M 270,170 L 270,70" />
+                    <path d="M 400,170 L 400,130" strokeWidth="1.5" />
+                    <path d="M 480,170 L 570,170 L 570,345" />
+                  </g>
+
+                  {/* Faded background track showing full walking route */}
+                  <path
+                    d="M 85,295 L 85,185 L 220,185 L 220,85 M 220,85 L 220,185 L 365,185 L 365,85 M 365,85 L 365,185 L 515,185 L 515,295"
+                    stroke="#1e293b"
+                    strokeWidth="3.5"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                    strokeDasharray="4 4"
+                  />
+
+                  {/* Active neon glowing crawl route */}
+                  <path
+                    d={(() => {
+                      const activeStage = previewStage || navStage || 'ENTRANCE';
+                      switch (activeStage) {
+                        case 'ENTRANCE':
+                        case 'TRIAGE':
+                          return "M 85,295 L 85,185 L 220,185 L 220,85";
+                        case 'ROOM_402_WAITING':
+                          return "M 220,85 L 220,185 L 365,185 L 365,145";
+                        case 'ROOM_402_CONSULTING':
+                          return "M 220,85 L 220,185 L 365,185 L 365,85";
+                        case 'CASHIER':
+                          return "M 365,85 L 365,185 L 515,185";
+                        case 'PHARMACY':
+                          return "M 515,185 L 515,260 L 515,295";
+                        default:
+                          return "M 85,295 L 85,185 L 220,185 L 220,85";
+                      }
+                    })()}
+                    stroke={(() => {
+                      const activeStage = previewStage || navStage || 'ENTRANCE';
+                      const stageDetails = {
+                        ENTRANCE: '#3b82f6',
+                        TRIAGE: '#3b82f6',
+                        ROOM_402_WAITING: '#8b5cf6',
+                        ROOM_402_CONSULTING: '#a855f7',
+                        CASHIER: '#eab308',
+                        PHARMACY: '#22c55e'
+                      };
+                      return stageDetails[activeStage] || '#3b82f6';
+                    })()}
+                    strokeWidth="7"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                    opacity="0.35"
+                    style={{ filter: 'blur(4px)', transition: 'all 0.5s ease' }}
+                  />
+                  <path
+                    d={(() => {
+                      const activeStage = previewStage || navStage || 'ENTRANCE';
+                      switch (activeStage) {
+                        case 'ENTRANCE':
+                        case 'TRIAGE':
+                          return "M 85,295 L 85,185 L 220,185 L 220,85";
+                        case 'ROOM_402_WAITING':
+                          return "M 220,85 L 220,185 L 365,185 L 365,145";
+                        case 'ROOM_402_CONSULTING':
+                          return "M 220,85 L 220,185 L 365,185 L 365,85";
+                        case 'CASHIER':
+                          return "M 365,85 L 365,185 L 515,185";
+                        case 'PHARMACY':
+                          return "M 515,185 L 515,260 L 515,295";
+                        default:
+                          return "M 85,295 L 85,185 L 220,185 L 220,85";
+                      }
+                    })()}
+                    stroke={(() => {
+                      const activeStage = previewStage || navStage || 'ENTRANCE';
+                      const stageDetails = {
+                        ENTRANCE: '#3b82f6',
+                        TRIAGE: '#3b82f6',
+                        ROOM_402_WAITING: '#8b5cf6',
+                        ROOM_402_CONSULTING: '#a855f7',
+                        CASHIER: '#eab308',
+                        PHARMACY: '#22c55e'
+                      };
+                      return stageDetails[activeStage] || '#3b82f6';
+                    })()}
+                    strokeWidth="3"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                    fill="none"
+                    strokeDasharray="8 8"
+                    style={{
+                      animation: 'wayfind-crawl 1.2s linear infinite',
+                      transition: 'all 0.5s ease'
+                      }}
+                    />
+
+                    {/* Room Nodes / Bounding Boxes */}
+                    {/* Entrance */}
+                    <g opacity={(previewStage || navStage || 'ENTRANCE') === 'ENTRANCE' ? 1 : 0.45} style={{ transition: 'opacity 0.4s' }}>
+                      <rect x="40" y="260" width="90" height="70" rx="8" fill="#1e293b" stroke={(previewStage || navStage || 'ENTRANCE') === 'ENTRANCE' ? '#3b82f6' : '#334155'} strokeWidth={(previewStage || navStage || 'ENTRANCE') === 'ENTRANCE' ? 2 : 1} />
+                      <text x="85" y="292" fill="white" fontSize="10" fontWeight="700" textAnchor="middle">ENTRANCE</text>
+                      <text x="85" y="310" fill="#94a3b8" fontSize="8" textAnchor="middle">Main Intake Wing</text>
+                      <text x="85" y="324" fill="#3b82f6" fontSize="9" textAnchor="middle">🚪 Lobby</text>
+                    </g>
+
+                    {/* Triage */}
+                    <g opacity={(previewStage || navStage || 'ENTRANCE') === 'TRIAGE' ? 1 : 0.45} style={{ transition: 'opacity 0.4s' }}>
+                      <rect x="170" y="40" width="100" height="70" rx="8" fill="#1e293b" stroke={(previewStage || navStage || 'ENTRANCE') === 'TRIAGE' ? '#3b82f6' : '#334155'} strokeWidth={(previewStage || navStage || 'ENTRANCE') === 'TRIAGE' ? 2 : 1} />
+                      <text x="220" y="72" fill="white" fontSize="10" fontWeight="700" textAnchor="middle">TRIAGE ROOM</text>
+                      <text x="220" y="90" fill="#94a3b8" fontSize="8" textAnchor="middle">Vital Signs Logging</text>
+                      <text x="220" y="104" fill="#3b82f6" fontSize="9" textAnchor="middle">🩺 Station A</text>
+                      {(previewStage || navStage || 'ENTRANCE') === 'TRIAGE' && (
+                        <circle cx="220" cy="85" r="10" fill="none" stroke="#3b82f6" strokeWidth="1.5" style={{ animation: 'wayfind-locator-pulse 2s infinite' }} />
+                      )}
+                    </g>
+
+                    {/* Room 402 */}
+                    <g opacity={((previewStage || navStage || 'ENTRANCE') === 'ROOM_402_WAITING' || (previewStage || navStage || 'ENTRANCE') === 'ROOM_402_CONSULTING') ? 1 : 0.45} style={{ transition: 'opacity 0.4s' }}>
+                      <rect x="310" y="40" width="110" height="70" rx="8" fill="#1e293b" stroke={((previewStage || navStage || 'ENTRANCE') === 'ROOM_402_WAITING' || (previewStage || navStage || 'ENTRANCE') === 'ROOM_402_CONSULTING') ? '#8b5cf6' : '#334155'} strokeWidth={((previewStage || navStage || 'ENTRANCE') === 'ROOM_402_WAITING' || (previewStage || navStage || 'ENTRANCE') === 'ROOM_402_CONSULTING') ? 2 : 1} />
+                      <text x="365" y="72" fill="white" fontSize="10" fontWeight="700" textAnchor="middle">ROOM 402</text>
+                      <text x="365" y="90" fill="#94a3b8" fontSize="8" textAnchor="middle">Dr. Sarah Jenkins</text>
+                      <text x="365" y="104" fill="#8b5cf6" fontSize="9" textAnchor="middle">👩‍⚕️ Cardiology</text>
+                      {((previewStage || navStage || 'ENTRANCE') === 'ROOM_402_WAITING' || (previewStage || navStage || 'ENTRANCE') === 'ROOM_402_CONSULTING') && (
+                        <circle cx="365" cy="85" r="10" fill="none" stroke="#8b5cf6" strokeWidth="1.5" style={{ animation: 'wayfind-locator-pulse 2s infinite' }} />
+                      )}
+                    </g>
+
+                    {/* Cashier */}
+                    <g opacity={(previewStage || navStage || 'ENTRANCE') === 'CASHIER' ? 1 : 0.45} style={{ transition: 'opacity 0.4s' }}>
+                      <rect x="470" y="150" width="90" height="70" rx="8" fill="#1e293b" stroke={(previewStage || navStage || 'ENTRANCE') === 'CASHIER' ? '#eab308' : '#334155'} strokeWidth={(previewStage || navStage || 'ENTRANCE') === 'CASHIER' ? 2 : 1} />
+                      <text x="515" y="182" fill="white" fontSize="10" fontWeight="700" textAnchor="middle">CASHIER DESK</text>
+                      <text x="515" y="200" fill="#94a3b8" fontSize="8" textAnchor="middle">Billing Counter 3</text>
+                      <text x="515" y="214" fill="#eab308" fontSize="9" textAnchor="middle">💳 Settle copay</text>
+                      {(previewStage || navStage || 'ENTRANCE') === 'CASHIER' && (
+                        <circle cx="515" cy="185" r="10" fill="none" stroke="#eab308" strokeWidth="1.5" style={{ animation: 'wayfind-locator-pulse 2s infinite' }} />
+                      )}
+                    </g>
+
+                    {/* Pharmacy */}
+                    <g opacity={(previewStage || navStage || 'ENTRANCE') === 'PHARMACY' ? 1 : 0.45} style={{ transition: 'opacity 0.4s' }}>
+                      <rect x="470" y="260" width="90" height="70" rx="8" fill="#1e293b" stroke={(previewStage || navStage || 'ENTRANCE') === 'PHARMACY' ? '#22c55e' : '#334155'} strokeWidth={(previewStage || navStage || 'ENTRANCE') === 'PHARMACY' ? 2 : 1} />
+                      <text x="515" y="292" fill="white" fontSize="10" fontWeight="700" textAnchor="middle">PHARMACY</text>
+                      <text x="515" y="310" fill="#94a3b8" fontSize="8" textAnchor="middle">Rx Dispensing Window</text>
+                      <text x="515" y="324" fill="#22c55e" fontSize="9" textAnchor="middle">💊 Dispensation</text>
+                      {(previewStage || navStage || 'ENTRANCE') === 'PHARMACY' && (
+                        <circle cx="515" cy="295" r="10" fill="none" stroke="#22c55e" strokeWidth="1.5" style={{ animation: 'wayfind-locator-pulse 2s infinite' }} />
+                      )}
+                    </g>
+
+                    {/* Real-time pulsing glowing User Locator dot */}
+                    <g
+                      transform={(() => {
+                        const activeStage = previewStage || navStage || 'ENTRANCE';
+                        const userCoordinates = {
+                          ENTRANCE: { x: 85, y: 295 },
+                          TRIAGE: { x: 220, y: 85 },
+                          ROOM_402_WAITING: { x: 365, y: 145 },
+                          ROOM_402_CONSULTING: { x: 365, y: 85 },
+                          CASHIER: { x: 515, y: 185 },
+                          PHARMACY: { x: 515, y: 295 }
+                        };
+                        const userPos = userCoordinates[activeStage] || userCoordinates['ENTRANCE'];
+                        return `translate(${userPos.x}, ${userPos.y})`;
+                      })()}
+                      style={{ transition: 'all 0.5s cubic-bezier(0.4, 0, 0.2, 1)' }}
+                    >
+                      <circle cx="0" cy="0" r="12" fill="#10b981" opacity="0.3" style={{ animation: 'wayfind-locator-pulse 1.5s infinite' }} />
+                      <circle cx="0" cy="0" r="6" fill="#10b981" stroke="white" strokeWidth="2" style={{ animation: 'wayfind-user-pulse 1.5s infinite' }} />
+                    </g>
+                  </svg>
+                </div>
+
+                {/* HUD Details Info Drawer */}
+                <div style={{
+                  padding: '24px',
+                  backgroundColor: 'var(--color-surface)',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '20px'
+                }}>
+                  {/* Active Instruction Block */}
+                  {(() => {
+                    const activeStage = previewStage || navStage || 'ENTRANCE';
+                    const stageDetails = {
+                      ENTRANCE: {
+                        title: "Clinic Entrance (Main Intake)",
+                        instructions: "Welcome to Floor 4. Please proceed straight ahead through the automatic glass doors and report to the Triage Desk to log your vitals.",
+                        time: "30s",
+                        distance: "10m",
+                        color: "#3b82f6",
+                        icon: "🚪",
+                        step: 1
+                      },
+                      TRIAGE: {
+                        title: "Triage Desk (Vitals Logging)",
+                        instructions: "Please report to the Triage desk. The nurse will measure your blood pressure, temperature, and heart rate for your record.",
+                        time: "45s",
+                        distance: "15m",
+                        color: "#3b82f6",
+                        icon: "🩺",
+                        step: 2
+                      },
+                      ROOM_402_WAITING: {
+                        title: "Consultation Room 402 Waiting Area",
+                        instructions: "Vitals complete. Please walk along Corridor B and wait in the seating cluster directly outside Room 402.",
+                        time: "1m 15s",
+                        distance: "35m",
+                        color: "#8b5cf6",
+                        icon: "💺",
+                        step: 3
+                      },
+                      ROOM_402_CONSULTING: {
+                        title: "Consultation Room 402 (Active)",
+                        instructions: "It's your turn! Please walk into Consultation Room 402. Dr. Sarah Jenkins is ready to see you now.",
+                        time: "0s",
+                        distance: "0m",
+                        color: "#a855f7",
+                        icon: "👩‍⚕️",
+                        step: 4
+                      },
+                      CASHIER: {
+                        title: "Cashier Desk (Billing & Insurance)",
+                        instructions: "Your consultation is complete. Proceed past the central elevators to Cashier Desk 3 to settle copay and sign claims.",
+                        time: "1m",
+                        distance: "25m",
+                        color: "#eab308",
+                        icon: "💳",
+                        step: 5
+                      },
+                      PHARMACY: {
+                        title: "Pharmacy Counter (Rx Pickup)",
+                        instructions: "Your cardiorespiratory medications have been filled. Head to the right-side Pharmacy Counters to pick up your prescription.",
+                        time: "45s",
+                        distance: "20m",
+                        color: "#22c55e",
+                        icon: "💊",
+                        step: 6
+                      }
+                    };
+                    const details = stageDetails[activeStage] || stageDetails['ENTRANCE'];
+                    const activeColor = details.color;
+
+                    return (
+                      <div style={{
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '16px',
+                        backgroundColor: 'rgba(30, 41, 59, 0.03)',
+                        padding: '16px 20px',
+                        borderRadius: '16px',
+                        border: '1px solid var(--border-light)'
+                      }}>
+                        <div style={{
+                          width: '48px',
+                          height: '48px',
+                          borderRadius: '12px',
+                          backgroundColor: `${activeColor}15`,
+                          color: activeColor,
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                          fontSize: '24px',
+                          flexShrink: 0
+                        }}>
+                          {details.icon}
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                              Step {details.step} of 6 • Active Destination
+                            </span>
+                            <div style={{ display: 'flex', gap: '8px', fontSize: '11px', fontWeight: 700 }}>
+                              <span style={{ color: 'var(--color-text-main)' }}>⏱️ {details.time}</span>
+                              <span style={{ color: 'var(--color-text-muted)' }}>•</span>
+                              <span style={{ color: 'var(--color-text-main)' }}>📏 {details.distance}</span>
+                            </div>
+                          </div>
+                          <h4 style={{ margin: '4px 0', fontSize: 'var(--font-size-base)', fontWeight: 700, color: 'var(--color-text-main)' }}>
+                            {details.title}
+                          </h4>
+                          <p style={{ margin: 0, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-muted)', lineHeight: 1.4 }}>
+                            {details.instructions}
+                          </p>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Manual Override & Preview Mode Bar */}
+                  <div style={{ borderTop: '1px dashed var(--border-light)', paddingTop: '16px' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                        👁️ PREVIEW / MANUAL ROUTE OVERRIDE
+                      </span>
+                      {previewStage && (
+                        <button
+                          onClick={() => {
+                            setPreviewStage(null);
+                          }}
+                          style={{
+                            fontSize: '10px',
+                            backgroundColor: 'var(--color-primary-light)',
+                            border: 'none',
+                            color: 'var(--color-primary)',
+                            padding: '2px 8px',
+                            borderRadius: '50px',
+                            fontWeight: 700,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          🔄 Reset to Live Queue Status
+                        </button>
+                      )}
+                    </div>
+
+                    <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                      {(() => {
+                        const activeStage = previewStage || navStage || 'ENTRANCE';
+                        const stageDetails = {
+                          ENTRANCE: { title: "Entrance", icon: "🚪", color: "#3b82f6" },
+                          TRIAGE: { title: "Triage", icon: "🩺", color: "#3b82f6" },
+                          ROOM_402_WAITING: { title: "Waiting", icon: "💺", color: "#8b5cf6" },
+                          ROOM_402_CONSULTING: { title: "Consulting", icon: "👩‍⚕️", color: "#a855f7" },
+                          CASHIER: { title: "Cashier", icon: "💳", color: "#eab308" },
+                          PHARMACY: { title: "Pharmacy", icon: "💊", color: "#22c55e" }
+                        };
+
+                        return Object.keys(stageDetails).map((key) => {
+                          const isSelected = activeStage === key;
+                          const isRealStage = navStage === key;
+                          const details = stageDetails[key];
+                          return (
+                            <button
+                              key={key}
+                              onClick={() => {
+                                setPreviewStage(key);
+                              }}
+                              style={{
+                                padding: '6px 12px',
+                                fontSize: '11px',
+                                borderRadius: '8px',
+                                border: isSelected ? `1.5px solid ${details.color}` : '1.5px solid var(--border-light)',
+                                backgroundColor: isSelected ? `${details.color}10` : 'var(--color-surface)',
+                                color: isSelected ? 'var(--color-text-main)' : 'var(--color-text-muted)',
+                                fontWeight: isSelected ? 700 : 500,
+                                cursor: 'pointer',
+                                display: 'flex',
+                                alignItems: 'center',
+                                gap: '6px',
+                                transition: 'all 0.15s'
+                              }}
+                            >
+                              <span>{details.icon}</span>
+                              <span>{details.title}</span>
+                              {isRealStage && (
+                                <span style={{
+                                  width: '6px',
+                                  height: '6px',
+                                  backgroundColor: '#22c55e',
+                                  borderRadius: '50%',
+                                  display: 'inline-block'
+                                }} title="Live Queue Status"></span>
+                              )}
+                            </button>
+                          );
+                        });
+                      })()}
+                    </div>
+                  </div>
+                </div>
+              </motion.div>
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         </div>
       </div>
