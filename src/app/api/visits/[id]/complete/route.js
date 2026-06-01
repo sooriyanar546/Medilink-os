@@ -46,6 +46,77 @@ export async function PATCH(request, { params }) {
       }
     });
 
+    // 2c. Automatically Generate Intelligent AI-Audited Billing Claim
+    try {
+      const clinicalNote = await prisma.clinicalNote.findFirst({
+        where: { visitId: id }
+      });
+      
+      let amountVal = 150.00;
+      let rejectionRisk = 0;
+      let missingDocs = [];
+      
+      if (clinicalNote) {
+        const diagText = (clinicalNote.assessment || "").toLowerCase();
+        const rawMeds = clinicalNote.medications;
+        const meds = Array.isArray(rawMeds) ? rawMeds : [];
+        
+        meds.forEach(m => {
+          const drug = (m.drugName || m.name || "").toLowerCase();
+          if (drug.includes("amlodipine")) amountVal += 35.00;
+          else if (drug.includes("paracetamol") || drug.includes("acetaminophen")) amountVal += 15.00;
+          else if (drug.includes("sumatriptan")) amountVal += 75.00;
+          else if (drug.includes("ibuprofen")) amountVal += 20.00;
+          else amountVal += 30.00;
+        });
+        
+        // Replicated Compliance Rules
+        if (diagText.includes("palpitations") || diagText.includes("cardiac")) {
+          const hasHolter = (clinicalNote.plan || "").toLowerCase().includes("holter") || 
+                            (clinicalNote.plan || "").toLowerCase().includes("ecg");
+          if (!hasHolter) {
+            rejectionRisk += 35;
+            missingDocs.push("Ambulatory Holter ECG justification for palpitations.");
+          }
+        }
+        
+        if (diagText.includes("hypertension") || diagText.includes("blood pressure")) {
+          const hasAmlodipine = meds.some(m => (m.drugName || m.name || "").toLowerCase().includes("amlodipine"));
+          if (!hasAmlodipine) {
+            rejectionRisk += 25;
+            missingDocs.push("Standard anti-hypertensive (Amlodipine) medication prescription.");
+          }
+        }
+        
+        const hasSumatriptan = meds.some(m => (m.drugName || m.name || "").toLowerCase().includes("sumatriptan"));
+        if (hasSumatriptan && !diagText.includes("migraine")) {
+          rejectionRisk += 40;
+          missingDocs.push("Migraine primary diagnosis to justify Sumatriptan.");
+        }
+      }
+      
+      await prisma.billingClaim.upsert({
+        where: { visitId: id },
+        update: {
+          amount: amountVal,
+          rejectionRisk,
+          missingDocs,
+          status: rejectionRisk > 30 ? 'FLAGGED' : 'PENDING'
+        },
+        create: {
+          visitId: id,
+          amount: amountVal,
+          tpaName: "National Health Insurance",
+          rejectionRisk,
+          missingDocs,
+          status: rejectionRisk > 30 ? 'FLAGGED' : 'PENDING'
+        }
+      });
+      console.log(`📡 [Revenue Shield] Automatically generated billing claim for visit ${id} (Risk: ${rejectionRisk}%)`);
+    } catch (claimErr) {
+      console.error("❌ Failed to automatically generate billing claim inside complete route:", claimErr);
+    }
+
     // 3. Find and promote the next WAITING patient to CONSULTING
     const nextVisit = await prisma.visit.findFirst({
       where: {

@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { CreditCard, CheckCircle2, DollarSign, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { CreditCard, CheckCircle2, DollarSign, FileText, Loader2, RefreshCw, ShieldAlert } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHospitalStore } from '@/store/useHospitalStore';
 
@@ -242,6 +242,37 @@ export default function CashierMode() {
                     <span style={{ fontSize: '1.125rem', fontWeight: 700, color: 'var(--color-primary)' }}>${claim.amount.toLocaleString()}</span>
                   </div>
                 </div>
+
+                {/* TPA Insurance Pre-Authorization Alert */}
+                {claim.rejectionRisk > 0 && (
+                  <div style={{ 
+                    marginBottom: '16px', 
+                    padding: '12px', 
+                    borderRadius: '8px', 
+                    backgroundColor: claim.rejectionRisk > 30 ? '#fff1f2' : '#fefbeb', 
+                    border: claim.rejectionRisk > 30 ? '1px solid #fecdd3' : '1px solid #fef3c7',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '6px'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: claim.rejectionRisk > 30 ? '#be123c' : '#ca8a04', display: 'flex', alignItems: 'center', gap: '4px', textTransform: 'uppercase' }}>
+                        <ShieldAlert size={12} />
+                        TPA HOLD PRE-AUTH WARNING
+                      </div>
+                      <span style={{ fontSize: '10px', fontWeight: 'bold', color: claim.rejectionRisk > 30 ? '#be123c' : '#ca8a04' }}>
+                        RISK: {claim.rejectionRisk}%
+                      </span>
+                    </div>
+                    {claim.missingDocs && claim.missingDocs.length > 0 && (
+                      <ul style={{ margin: 0, paddingLeft: '14px', fontSize: '11px', color: claim.rejectionRisk > 30 ? '#9f1239' : '#854d0e', lineHeight: 1.4, listStyleType: 'disc' }}>
+                        {claim.missingDocs.map((doc, idx) => (
+                          <li key={idx}>{doc}</li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
 
                 {claim.paymentStatus === 'UNPAID' ? (
                   <div style={{ display: 'flex', gap: '8px' }}>

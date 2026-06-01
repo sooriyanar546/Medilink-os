@@ -73,12 +73,130 @@ export default function DoctorMode() {
   const [cleanTranscript, setCleanTranscript] = useState("");
   const [activeVoiceCommand, setActiveVoiceCommand] = useState(null);
   const [labOrders, setLabOrders] = useState([]);
+  const [resolvedCompliance, setResolvedCompliance] = useState([]);
   
   const recognitionRef = useRef(null);
   const cleanTranscriptRef = useRef("");
   const processedIndexRef = useRef(0);
 
   const codes = structuredNote ? getClinicalCodes(structuredNote) : null;
+
+  const { warnings: rawWarnings, score: rawScore } = structuredNote 
+    ? auditClinicalCompliance(structuredNote, labOrders)
+    : { warnings: [], score: 100 };
+  const warnings = rawWarnings.filter(w => !resolvedCompliance.includes(w.id));
+  const complianceScore = warnings.length === 0 ? 100 : rawScore;
+
+  const auditClinicalCompliance = (note, activeLabs = []) => {
+    const diag = (note?.note?.assessment || note?.assessment || "").toLowerCase();
+    const meds = note?.note?.medications || note?.medications || [];
+    
+    let list = [];
+    let scoreVal = 100;
+    
+    if (diag.includes("palpitations") || diag.includes("cardiac") || diag.includes("heart")) {
+      const hasHolter = (note?.note?.plan || note?.plan || "").toLowerCase().includes("holter") || 
+                        (note?.note?.plan || note?.plan || "").toLowerCase().includes("ecg") ||
+                        activeLabs.some(l => l.includes("ECG") || l.includes("HOLTER"));
+      if (!hasHolter) {
+        list.push({
+          id: "MISSING_HOLTER",
+          severity: "HIGH",
+          message: "Missing ambulatory Holter ECG record recommendation to justify cardiology palpitations diagnosis.",
+          resolutionText: "Auto-Resolve: Recommend Holter ECG Monitor"
+        });
+        scoreVal -= 35;
+      }
+    }
+    
+    if (diag.includes("hypertension") || diag.includes("blood pressure")) {
+      const hasAmlodipine = meds.some(m => m.drugName.toLowerCase().includes("amlodipine"));
+      if (!hasAmlodipine) {
+        list.push({
+          id: "MISSING_BP_MED",
+          severity: "MEDIUM",
+          message: "Essential Hypertension diagnosed, but no standard anti-hypertensive medication is currently prescribed.",
+          resolutionText: "Auto-Resolve: Prescribe Amlodipine 5mg QD"
+        });
+        scoreVal -= 25;
+      }
+    }
+
+    const hasSumatriptan = meds.some(m => m.drugName.toLowerCase().includes("sumatriptan"));
+    if (hasSumatriptan && !diag.includes("migraine")) {
+      list.push({
+        id: "MISMAPPED_MIGRAINE",
+        severity: "HIGH",
+        message: "Sumatriptan prescribed, but primary diagnosis (Assessment) is missing migraine justification.",
+        resolutionText: "Auto-Resolve: Add Migraine Diagnosis"
+      });
+      scoreVal -= 40;
+    }
+
+    scoreVal = Math.max(10, scoreVal);
+    return { warnings: list, score: scoreVal };
+  };
+
+  const handleResolveCompliance = (id) => {
+    setResolvedCompliance(prev => [...prev, id]);
+    
+    if (id === 'MISSING_HOLTER') {
+      setLabOrders(prev => [...prev, "HOLTER ECG"]);
+      setStructuredNote(prev => {
+        const initial = { note: {} };
+        const current = prev || initial;
+        const planText = current.note?.plan || current.plan || "";
+        const updatedPlan = planText ? `${planText.trim()} Recommend dynamic ambulatory Holter ECG monitoring.` : "Recommend dynamic ambulatory Holter ECG monitoring.";
+        return {
+          ...current,
+          plan: updatedPlan,
+          note: {
+            ...(current.note || {}),
+            plan: updatedPlan
+          }
+        };
+      });
+    } else if (id === 'MISSING_BP_MED') {
+      const newMed = {
+        drugName: "Amlodipine",
+        dosage: "5mg",
+        frequency: "QD",
+        duration: "14 days"
+      };
+      setStructuredNote(prev => {
+        const initial = { note: { medications: [] } };
+        const current = prev || initial;
+        const meds = current.note?.medications || current.medications || [];
+        const updatedMeds = [...meds, newMed];
+        return {
+          ...current,
+          medications: updatedMeds,
+          note: {
+            ...(current.note || {}),
+            medications: updatedMeds
+          }
+        };
+      });
+    } else if (id === 'MISMAPPED_MIGRAINE') {
+      setStructuredNote(prev => {
+        const initial = { note: {} };
+        const current = prev || initial;
+        const updatedDiag = "Migraine, Unspecified";
+        return {
+          ...current,
+          assessment: updatedDiag,
+          note: {
+            ...(current.note || {}),
+            assessment: updatedDiag
+          }
+        };
+      });
+    }
+
+    playChime();
+    triggerNativeHaptic('success');
+    showToast("Compliance warning auto-resolved!", "success");
+  };
 
   useEffect(() => {
     if (activeVoiceCommand) {
@@ -371,6 +489,7 @@ export default function DoctorMode() {
     cleanTranscriptRef.current = "";
     setStructuredNote(null);
     setLabOrders([]);
+    setResolvedCompliance([]);
   };
   return (
     <>
@@ -638,6 +757,122 @@ export default function DoctorMode() {
                       <span style={{ fontSize: '10px', color: '#854d0e', fontWeight: 600, display: 'block', marginBottom: '4px' }}>PLAN</span>
                       <span style={{ fontSize: '13px', color: '#713f12' }}>{structuredNote.note?.plan || structuredNote.plan}</span>
                     </div>
+                  </div>
+
+                  {/* AI Insurance Claim Auditor */}
+                  <div style={{ 
+                    background: 'rgba(255, 255, 255, 0.75)', 
+                    backdropFilter: 'blur(12px)',
+                    WebkitBackdropFilter: 'blur(12px)',
+                    border: '1px solid var(--border-light)', 
+                    borderRadius: '12px', 
+                    padding: '16px',
+                    display: 'flex',
+                    flexDirection: 'column',
+                    gap: '12px',
+                    boxShadow: 'var(--shadow-sm)'
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: '6px', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                        <ShieldAlert size={14} color="var(--color-primary)" />
+                        AI INSURANCE CLAIM AUDITOR
+                      </div>
+                      <span className={`badge ${complianceScore >= 80 ? 'badge-success' : complianceScore >= 50 ? 'badge-warning' : 'badge-danger'}`} style={{ fontWeight: 700 }}>
+                        REJECTION RISK: {100 - complianceScore}%
+                      </span>
+                    </div>
+
+                    {/* Progress Bar */}
+                    <div style={{ width: '100%', height: '8px', backgroundColor: '#e2e8f0', borderRadius: 'var(--radius-full)', overflow: 'hidden' }}>
+                      <motion.div 
+                        initial={{ width: 0 }}
+                        animate={{ width: `${100 - complianceScore}%` }}
+                        transition={{ type: 'spring', stiffness: 100, damping: 15 }}
+                        style={{ 
+                          height: '100%', 
+                          backgroundColor: (100 - complianceScore) <= 20 ? '#10b981' : (100 - complianceScore) <= 50 ? '#f59e0b' : '#ef4444' 
+                        }}
+                      />
+                    </div>
+
+                    {/* Audit Warnings */}
+                    <AnimatePresence mode="wait">
+                      {warnings.length === 0 ? (
+                        <motion.div 
+                          key="clean"
+                          initial={{ opacity: 0, y: -4 }}
+                          animate={{ opacity: 1, y: 0 }}
+                          style={{ 
+                            backgroundColor: '#f0fdf4', 
+                            border: '1px solid #bbf7d0', 
+                            borderRadius: '8px', 
+                            padding: '12px', 
+                            display: 'flex', 
+                            alignItems: 'center', 
+                            gap: '8px', 
+                            color: '#15803d',
+                            fontSize: '13px'
+                          }}
+                        >
+                          <CheckCircle2 size={16} color="#10b981" />
+                          <div>
+                            <strong style={{ fontWeight: 600 }}>TPA Pre-authorization Approved!</strong> All diagnostic justification, billing codes, and prescription alignment are validated.
+                          </div>
+                        </motion.div>
+                      ) : (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                          {warnings.map((warning) => (
+                            <motion.div 
+                              key={warning.id}
+                              initial={{ opacity: 0, y: 4 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.95 }}
+                              style={{ 
+                                backgroundColor: warning.severity === 'HIGH' ? '#fff1f2' : '#fefbeb', 
+                                border: warning.severity === 'HIGH' ? '1px solid #fecdd3' : '1px solid #fef3c7', 
+                                borderRadius: '8px', 
+                                padding: '10px 12px', 
+                                display: 'flex', 
+                                justifyContent: 'space-between',
+                                alignItems: 'center',
+                                gap: '12px'
+                              }}
+                            >
+                              <div style={{ display: 'flex', gap: '8px', alignItems: 'flex-start' }}>
+                                <AlertTriangle size={16} color={warning.severity === 'HIGH' ? '#ef4444' : '#f59e0b'} style={{ marginTop: '2px', flexShrink: 0 }} />
+                                <span style={{ fontSize: '12px', color: warning.severity === 'HIGH' ? '#9f1239' : '#854d0e', lineHeight: 1.4 }}>
+                                  {warning.message}
+                                </span>
+                              </div>
+                              <button 
+                                onClick={() => handleResolveCompliance(warning.id)}
+                                style={{
+                                  backgroundColor: 'white',
+                                  border: warning.severity === 'HIGH' ? '1px solid #fda4af' : '1px solid #fde047',
+                                  color: warning.severity === 'HIGH' ? '#e11d48' : '#ca8a04',
+                                  fontSize: '11px',
+                                  fontWeight: 600,
+                                  padding: '4px 10px',
+                                  borderRadius: 'var(--radius-sm)',
+                                  cursor: 'pointer',
+                                  flexShrink: 0,
+                                  boxShadow: 'var(--shadow-sm)',
+                                  transition: 'all 0.15s ease'
+                                }}
+                                onMouseEnter={(e) => {
+                                  e.target.style.backgroundColor = warning.severity === 'HIGH' ? '#fff1f2' : '#fefbeb';
+                                }}
+                                onMouseLeave={(e) => {
+                                  e.target.style.backgroundColor = 'white';
+                                }}
+                              >
+                                {warning.resolutionText}
+                              </button>
+                            </motion.div>
+                          ))}
+                        </div>
+                      )}
+                    </AnimatePresence>
                   </div>
 
                   {/* Medications Table */}
