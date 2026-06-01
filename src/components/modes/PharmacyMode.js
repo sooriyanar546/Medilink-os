@@ -4,6 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { Pill, CheckCircle2, Clock, AlertTriangle, PackageOpen, Loader2 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHospitalStore } from '@/store/useHospitalStore';
+import { triggerNativeHaptic } from '@/lib/native';
 
 export default function PharmacyMode() {
   const { showToast } = useHospitalStore();
@@ -51,12 +52,22 @@ export default function PharmacyMode() {
       if (res.ok) {
         fetchPrescriptions();
         showToast(`Prescription status updated to: ${status}`, "success");
+        
+        if (status === 'PREPARING') {
+          triggerNativeHaptic('light');
+        } else if (status === 'READY') {
+          triggerNativeHaptic('medium');
+        } else if (status === 'DISPENSED') {
+          triggerNativeHaptic('success');
+        }
       } else {
         showToast("Failed to update prescription.", "error");
+        triggerNativeHaptic('error');
       }
     } catch (e) {
       console.error(e);
       showToast("Error updating prescription status.", "error");
+      triggerNativeHaptic('error');
     }
   };
 
