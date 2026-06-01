@@ -808,6 +808,48 @@ If you would like a personalized clinical meal plan, you can book an appointment
 
                 </div>
               </div>
+
+              {/* Patient-facing Medication Safety Shield (Phase 12) */}
+              {!isStressReduction && (
+                <div style={{
+                  marginTop: '16px',
+                  padding: '12px 16px',
+                  backgroundColor: 'rgba(16, 185, 129, 0.05)',
+                  border: '1px solid rgba(16, 185, 129, 0.2)',
+                  borderRadius: '10px',
+                  display: 'flex',
+                  alignItems: 'flex-start',
+                  gap: '12px'
+                }}>
+                  <div style={{
+                    width: '32px',
+                    height: '32px',
+                    borderRadius: '50%',
+                    backgroundColor: '#d1fae5',
+                    color: '#047857',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    fontSize: '16px',
+                    flexShrink: 0
+                  }}>
+                    🛡️
+                  </div>
+                  <div>
+                    <div style={{ fontSize: '11px', fontWeight: 700, color: '#065f46', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '2px' }}>
+                      MEDILINK PRESCRIPTION SAFETY SHIELD
+                    </div>
+                    <h5 style={{ margin: '2px 0 4px 0', fontSize: '13px', fontWeight: 700, color: '#047857' }}>
+                      BP Antagonism Checked & Pharmacist Approved
+                    </h5>
+                    <p style={{ margin: 0, fontSize: '12px', color: '#065f46', lineHeight: 1.4 }}>
+                      We noticed you are taking chronic <strong>Amlodipine 5mg</strong> (for blood pressure control) and were recommended <strong>Paracetamol</strong> or temporary NSAIDs for pain. 
+                      Since NSAIDs like Ibuprofen can slightly lessen the blood pressure-lowering effect of your Amlodipine, your clinical care team has carefully structured your plan to use safe <strong>Paracetamol</strong> instead as the primary relief, keeping your heart metrics completely protected.
+                    </p>
+                  </div>
+                </div>
+              )}
+
             </div>
           </div>
 

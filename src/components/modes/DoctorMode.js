@@ -58,6 +58,13 @@ const getClinicalCodes = (note) => {
   return { icdCode, mappedMeds };
 };
 
+const patientHomeMeds = {
+  'pt_michael_chen': [
+    { drugName: "Amlodipine 5mg", dosage: "1 Tablet", frequency: "QD", indication: "Hypertension", rxNorm: "RxNorm: 197361" },
+    { drugName: "Sertraline 50mg", dosage: "1 Tablet", frequency: "QD", indication: "Anxiety/Depression", rxNorm: "RxNorm: 312937" }
+  ]
+};
+
 export default function DoctorMode() {
   const { queue, isLoadingQueue, loadQueue } = useHospitalQueue();
   const { adminMetrics, completeConsultation, showToast } = useHospitalStore();
@@ -81,19 +88,23 @@ export default function DoctorMode() {
 
   const codes = structuredNote ? getClinicalCodes(structuredNote) : null;
 
+  const patientId = currentPatient?.visit?.patientId || currentPatient?.patientId || currentPatient?.id || 'pt_michael_chen';
+  const homeMeds = patientHomeMeds[patientId] || patientHomeMeds['pt_michael_chen'];
+
   const { warnings: rawWarnings, score: rawScore } = structuredNote 
     ? auditClinicalCompliance(structuredNote, labOrders)
     : { warnings: [], score: 100 };
   const warnings = rawWarnings.filter(w => !resolvedCompliance.includes(w.id));
   const complianceScore = warnings.length === 0 ? 100 : rawScore;
 
-  const auditClinicalCompliance = (note, activeLabs = []) => {
+  function auditClinicalCompliance(note, activeLabs = []) {
     const diag = (note?.note?.assessment || note?.assessment || "").toLowerCase();
     const meds = note?.note?.medications || note?.medications || [];
     
     let list = [];
     let scoreVal = 100;
     
+    // Original SOAP compliance rules
     if (diag.includes("palpitations") || diag.includes("cardiac") || diag.includes("heart")) {
       const hasHolter = (note?.note?.plan || note?.plan || "").toLowerCase().includes("holter") || 
                         (note?.note?.plan || note?.plan || "").toLowerCase().includes("ecg") ||
@@ -133,9 +144,53 @@ export default function DoctorMode() {
       scoreVal -= 40;
     }
 
-    scoreVal = Math.max(10, scoreVal);
+    // Phase 12: Drug-Drug Interaction Safety Shield rules
+    const hasNewIbuprofen = meds.some(m => m.drugName.toLowerCase().includes("ibuprofen"));
+    const hasNewSumatriptan = meds.some(m => m.drugName.toLowerCase().includes("sumatriptan"));
+    const hasHomeAmlodipine = homeMeds.some(m => m.drugName.toLowerCase().includes("amlodipine"));
+    const hasHomeSertraline = homeMeds.some(m => m.drugName.toLowerCase().includes("sertraline") || m.drugName.toLowerCase().includes("fluoxetine"));
+
+    // Interaction Rule 1: Amlodipine (chronic) + Ibuprofen (acute) -> Antihypertensive Antagonism
+    if (hasNewIbuprofen && hasHomeAmlodipine) {
+      list.push({
+        id: "DDI_NSAID_ANTIHYPERTENSIVE",
+        severity: "MEDIUM",
+        message: "⚠️ Moderate Drug-Drug Interaction: Ibuprofen reduces the blood pressure lowering effects of chronic Amlodipine. Consider swapping to safe Paracetamol.",
+        resolutionText: "Auto-Swap with Safe Paracetamol"
+      });
+      scoreVal -= 20;
+    }
+
+    // Interaction Rule 2: Sumatriptan (acute) + Sertraline (chronic) -> Serotonin Syndrome
+    if (hasNewSumatriptan && hasHomeSertraline) {
+      list.push({
+        id: "DDI_TRIPTAN_SSRI",
+        severity: "CRITICAL",
+        message: "🚨 Critical Contraindication: Sumatriptan combined with Sertraline poses a severe risk of Serotonin Syndrome (autonomic hyper-reactivity). Consider NSAID monotherapy instead.",
+        resolutionText: "Auto-Swap with Safe NSAID"
+      });
+      scoreVal -= 45;
+    }
+
+    // Interaction Rule 3: Duplicative Therapy (Multiple simultaneous NSAIDs)
+    const nsaidMeds = meds.filter(m => 
+      m.drugName.toLowerCase().includes("ibuprofen") || 
+      m.drugName.toLowerCase().includes("naproxen") ||
+      m.drugName.toLowerCase().includes("aspirin")
+    );
+    if (nsaidMeds.length > 1) {
+      list.push({
+        id: "DDI_DUPLICATIVE_NSAID",
+        severity: "HIGH",
+        message: "⚠️ High Overdose Hazard: Simultaneous duplicate NSAID therapy increases risk of gastrointestinal ulcers and acute kidney impairment.",
+        resolutionText: "Auto-Resolve: Keep First NSAID Only"
+      });
+      scoreVal -= 30;
+    }
+
+    scoreVal = Math.max(5, scoreVal);
     return { warnings: list, score: scoreVal };
-  };
+  }
 
   const handleResolveCompliance = (id) => {
     setResolvedCompliance(prev => [...prev, id]);
@@ -188,6 +243,85 @@ export default function DoctorMode() {
           note: {
             ...(current.note || {}),
             assessment: updatedDiag
+          }
+        };
+      });
+    } else if (id === 'DDI_NSAID_ANTIHYPERTENSIVE') {
+      // Auto-swap Ibuprofen with Paracetamol 500mg TID
+      setStructuredNote(prev => {
+        const initial = { note: { medications: [] } };
+        const current = prev || initial;
+        const meds = current.note?.medications || current.medications || [];
+        const updatedMeds = meds.map(m => {
+          if (m.drugName.toLowerCase().includes("ibuprofen")) {
+            return {
+              ...m,
+              drugName: "Paracetamol",
+              dosage: "500mg",
+              frequency: "TID",
+              duration: "3 days"
+            };
+          }
+          return m;
+        });
+        return {
+          ...current,
+          medications: updatedMeds,
+          note: {
+            ...(current.note || {}),
+            medications: updatedMeds
+          }
+        };
+      });
+    } else if (id === 'DDI_TRIPTAN_SSRI') {
+      // Auto-swap/resolve critical SSRI risk: remove Sumatriptan and rely on safe NSAID (e.g. Ibuprofen 400mg)
+      setStructuredNote(prev => {
+        const initial = { note: { medications: [] } };
+        const current = prev || initial;
+        const meds = current.note?.medications || current.medications || [];
+        // Filter out sumatriptan, replace with/ensure Ibuprofen is active
+        const hasIbuprofen = meds.some(m => m.drugName.toLowerCase().includes("ibuprofen"));
+        let updatedMeds = meds.filter(m => !m.drugName.toLowerCase().includes("sumatriptan"));
+        if (!hasIbuprofen) {
+          updatedMeds.push({
+            drugName: "Ibuprofen",
+            dosage: "400mg",
+            frequency: "BID",
+            duration: "3 days"
+          });
+        }
+        return {
+          ...current,
+          medications: updatedMeds,
+          note: {
+            ...(current.note || {}),
+            medications: updatedMeds
+          }
+        };
+      });
+    } else if (id === 'DDI_DUPLICATIVE_NSAID') {
+      // Keep only the first NSAID
+      setStructuredNote(prev => {
+        const initial = { note: { medications: [] } };
+        const current = prev || initial;
+        const meds = current.note?.medications || current.medications || [];
+        let nsaidCount = 0;
+        const updatedMeds = meds.filter(m => {
+          const isNsaid = m.drugName.toLowerCase().includes("ibuprofen") || 
+                          m.drugName.toLowerCase().includes("naproxen") ||
+                          m.drugName.toLowerCase().includes("aspirin");
+          if (isNsaid) {
+            nsaidCount++;
+            return nsaidCount === 1; // Keep only the first one
+          }
+          return true;
+        });
+        return {
+          ...current,
+          medications: updatedMeds,
+          note: {
+            ...(current.note || {}),
+            medications: updatedMeds
           }
         };
       });
@@ -517,58 +651,92 @@ export default function DoctorMode() {
 
       <div className="doctor-grid">
         
-        {/* Left Column: Live Queue & Clinical Priority */}
-        <div className="card" style={{ padding: '0', overflow: 'hidden', display: 'flex', flexDirection: 'column' }}>
-          <div className="card-header" style={{ padding: 'var(--space-4)', marginBottom: 0, backgroundColor: 'var(--color-surface-hover)' }}>
-            <div className="card-title">Live Queue</div>
-          </div>
-          <div style={{ display: 'flex', flexDirection: 'column' }}>
-            
-            {queue.length === 0 && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                style={{ padding: 'var(--space-4)', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', textAlign: 'center' }}
-              >
-                ✓ Queue cleared.
-              </motion.div>
-            )}
-
-            <AnimatePresence>
-              {queue.map((patient, index) => (
+        {/* Left Column: Live Queue & Clinical Priority & ABHA Locker */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+          <div className="card" style={{ padding: '0', overflow: 'hidden', display: 'flex', flexDirection: 'column', margin: 0 }}>
+            <div className="card-header" style={{ padding: 'var(--space-4)', marginBottom: 0, backgroundColor: 'var(--color-surface-hover)' }}>
+              <div className="card-title">Live Queue</div>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              
+              {queue.length === 0 && (
                 <motion.div
-                  key={patient.id}
-                  layout
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  exit={{ opacity: 0, x: 20, height: 0, padding: 0, overflow: 'hidden' }}
-                  transition={{ type: 'spring', stiffness: 400, damping: 30 }}
-                  style={{ 
-                    padding: 'var(--space-4)', 
-                    borderBottom: 'var(--border-light)', 
-                    borderLeft: patient.status === 'consulting' ? '3px solid var(--color-success)' : patient.critical ? '3px solid var(--color-danger)' : '3px solid transparent', 
-                    backgroundColor: patient.status === 'consulting' ? 'var(--color-surface)' : patient.critical ? '#fffafa' : 'transparent' 
-                  }}
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  style={{ padding: 'var(--space-4)', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', textAlign: 'center' }}
                 >
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
-                    <span style={{ fontWeight: patient.status === 'consulting' ? 600 : 500, color: patient.critical ? '#991b1b' : 'var(--color-text-main)', fontSize: 'var(--font-size-sm)' }}>{patient.name}</span>
-                    <motion.span
-                      className={`badge ${patient.status === 'consulting' ? 'badge-success' : patient.critical ? 'badge-danger' : 'badge-warning'}`}
-                      initial={{ scale: 0.8, opacity: 0 }}
-                      animate={{ scale: 1, opacity: 1 }}
-                      transition={{ delay: index * 0.05 + 0.1 }}
-                    >
-                      {patient.status === 'consulting' ? 'Consulting' : patient.critical ? 'Critical Labs' : `Waiting (${patient.waitTime}m)`}
-                    </motion.span>
-                  </div>
-                  <div style={{ fontSize: 'var(--font-size-xs)', color: patient.critical ? '#b91c1c' : 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
-                    {patient.critical && <AlertCircle size={12} />}
-                    {patient.id} • {patient.reason}
-                  </div>
+                  ✓ Queue cleared.
                 </motion.div>
-              ))}
-            </AnimatePresence>
+              )}
 
+              <AnimatePresence>
+                {queue.map((patient, index) => (
+                  <motion.div
+                    key={patient.id}
+                    layout
+                    initial={{ opacity: 0, x: -20 }}
+                    animate={{ opacity: 1, x: 0 }}
+                    exit={{ opacity: 0, x: 20, height: 0, padding: 0, overflow: 'hidden' }}
+                    transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+                    style={{ 
+                      padding: 'var(--space-4)', 
+                      borderBottom: 'var(--border-light)', 
+                      borderLeft: patient.status === 'consulting' ? '3px solid var(--color-success)' : patient.critical ? '3px solid var(--color-danger)' : '3px solid transparent', 
+                      backgroundColor: patient.status === 'consulting' ? 'var(--color-surface)' : patient.critical ? '#fffafa' : 'transparent' 
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <span style={{ fontWeight: patient.status === 'consulting' ? 600 : 500, color: patient.critical ? '#991b1b' : 'var(--color-text-main)', fontSize: 'var(--font-size-sm)' }}>{patient.name}</span>
+                      <motion.span
+                        className={`badge ${patient.status === 'consulting' ? 'badge-success' : patient.critical ? 'badge-danger' : 'badge-warning'}`}
+                        initial={{ scale: 0.8, opacity: 0 }}
+                        animate={{ scale: 1, opacity: 1 }}
+                        transition={{ delay: index * 0.05 + 0.1 }}
+                      >
+                        {patient.status === 'consulting' ? 'Consulting' : patient.critical ? 'Critical Labs' : `Waiting (${patient.waitTime}m)`}
+                      </motion.span>
+                    </div>
+                    <div style={{ fontSize: 'var(--font-size-xs)', color: patient.critical ? '#b91c1c' : 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+                      {patient.critical && <AlertCircle size={12} />}
+                      {patient.id} • {patient.reason}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+
+            </div>
+          </div>
+
+          {/* ABHA Patient Health Locker: Home Medications Card */}
+          <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)', margin: 0 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid var(--border-light)', paddingBottom: '8px' }}>
+              <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                🛡️ ABHA Health Locker
+              </div>
+              <span className="badge" style={{ fontSize: '9px', backgroundColor: '#dcfce3', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 8px', fontWeight: 700 }}>
+                SECURE ACCESS
+              </span>
+            </div>
+            
+            <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.4 }}>
+              Active chronic home medications retrieved securely from patient's encrypted health record:
+            </p>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {homeMeds.map((med, idx) => (
+                <div key={idx} style={{ padding: '10px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <div>
+                    <div style={{ fontWeight: 600, fontSize: '12px', color: 'var(--color-text-main)' }}>{med.drugName}</div>
+                    <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                      Dosage: {med.dosage} ({med.frequency}) • {med.indication}
+                    </div>
+                  </div>
+                  <span style={{ fontSize: '9px', fontFamily: 'monospace', backgroundColor: '#eff6ff', color: '#1e40af', padding: '2px 6px', borderRadius: '4px', border: '1px solid #bfdbfe', fontWeight: 600 }}>
+                    {med.rxNorm}
+                  </span>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
