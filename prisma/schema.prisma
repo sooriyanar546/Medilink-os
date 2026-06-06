@@ -101,6 +101,7 @@ model Patient {
   messages        Message[]
   blockchain      BlockchainRecord[]
   snoozedReminders SnoozedReminder[]
+  consents        PatientConsent[]
 }
 
 model Doctor {
@@ -352,3 +353,38 @@ model SnoozedReminder {
   patient        Patient  @relation(fields: [patientId], references: [id])
   @@index([status, scheduledAt])
 }
+
+// ============================================================
+// PATIENT CONSENT & DATA SHARING (PHASE 14)
+// ============================================================
+
+enum ConsentAccessLevel {
+  CLINICAL
+  MEDICATION
+  BILLING
+}
+
+enum ConsentStatus {
+  ACTIVE
+  REVOKED
+  EXPIRED
+}
+
+model PatientConsent {
+  id           String             @id @default(cuid())
+  patientId    String
+  accessorId   String             // ID of the Doctor or User, or "*" for any of that role
+  accessorRole AppRole
+  accessLevel  ConsentAccessLevel
+  consentToken String             @db.Text // Cryptographically signed HMAC token
+  status       ConsentStatus      @default(ACTIVE)
+  expiresAt    DateTime
+  createdAt    DateTime           @default(now())
+  revokedAt    DateTime?
+
+  patient      Patient            @relation(fields: [patientId], references: [id])
+
+  @@index([patientId, status])
+  @@index([accessorId, status])
+}
+

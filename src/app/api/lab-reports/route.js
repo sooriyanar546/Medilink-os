@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import Groq from 'groq-sdk';
+import { auth } from '@/auth';
+import { verifyPatientAccess } from '@/lib/consentGuard';
 
 const groq = process.env.GROQ_API_KEY ? new Groq({ apiKey: process.env.GROQ_API_KEY }) : null;
 
@@ -100,9 +102,17 @@ export async function GET(request) {
   try {
     const { searchParams } = new URL(request.url);
     const patientId = searchParams.get('patientId');
+    const emergencyBypass = searchParams.get('emergencyBypass') === 'true';
 
     if (!patientId) {
       return NextResponse.json({ error: 'patientId is required' }, { status: 400 });
+    }
+
+    // HIPAA Consent Gatekeeper Check
+    const session = await auth();
+    const access = await verifyPatientAccess(session?.user, patientId, 'CLINICAL', emergencyBypass);
+    if (!access.authorized) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
     const reports = await prisma.labReport.findMany({

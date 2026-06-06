@@ -2,6 +2,8 @@ import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { pusherServer } from '@/lib/pusher';
 import { logAudit } from '@/lib/audit';
+import { auth } from '@/auth';
+import { verifyPatientAccess } from '@/lib/consentGuard';
 
 // PATCH /api/visits/[id]/complete — Doctor completes a consultation
 // This is the core action that drives the "Sign & Next Patient" flow.
@@ -17,6 +19,16 @@ export async function PATCH(request, { params }) {
 
     if (!visit) {
       return NextResponse.json({ error: 'Visit not found' }, { status: 404 });
+    }
+
+    // HIPAA Consent Gatekeeper Check
+    const session = await auth();
+    const body = await request.clone().json().catch(() => ({}));
+    const emergencyBypass = body.emergencyBypass === true;
+
+    const access = await verifyPatientAccess(session?.user, visit.patientId, 'CLINICAL', emergencyBypass);
+    if (!access.authorized) {
+      return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
     if (visit.status === 'COMPLETED') {

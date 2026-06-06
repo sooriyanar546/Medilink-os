@@ -120,7 +120,7 @@ export const useHospitalStore = create((set, get) => ({
   })),
 
   // ── OPTION A: Complete consultation — persists to database ────
-  completeConsultation: async () => {
+  completeConsultation: async (emergencyBypass = false) => {
     const { queue } = get();
     if (queue.length === 0) return;
 
@@ -150,6 +150,7 @@ export const useHospitalStore = create((set, get) => ({
         await fetch(`/api/visits/${currentVisit.visitId}/complete`, {
           method: 'PATCH',
           headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ emergencyBypass })
         });
       } catch (err) {
         console.warn('Failed to persist visit completion to DB:', err.message);

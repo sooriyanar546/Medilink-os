@@ -86,6 +86,97 @@ export default function DoctorMode() {
   const cleanTranscriptRef = useRef("");
   const processedIndexRef = useRef(0);
 
+  // Consent & Emergency Bypass States (Phase 14)
+  const [hasConsent, setHasConsent] = useState(false);
+  const [consentStatus, setConsentStatus] = useState('CHECKING'); // CHECKING, GRANTED, ABSENT, REQUESTED
+  const [emergencyBypass, setEmergencyBypass] = useState(false);
+  const [isRequestingConsent, setIsRequestingConsent] = useState(false);
+
+  const checkConsent = async () => {
+    if (!patientId) return;
+    setConsentStatus('CHECKING');
+    try {
+      const res = await fetch(`/api/consent`);
+      if (res.ok) {
+        const data = await res.json();
+        const activeConsent = data.find(c => 
+          c.patientId === patientId && 
+          c.status === 'ACTIVE' && 
+          new Date(c.expiresAt) > new Date()
+        );
+        if (activeConsent) {
+          setHasConsent(true);
+          setConsentStatus('GRANTED');
+        } else {
+          setHasConsent(false);
+          setConsentStatus('ABSENT');
+        }
+      } else {
+        setConsentStatus('ABSENT');
+      }
+    } catch (e) {
+      console.error(e);
+      setConsentStatus('ABSENT');
+    }
+  };
+
+  const handleRequestConsent = async () => {
+    setIsRequestingConsent(true);
+    showToast("Requesting access from patient...", "info");
+    try {
+      const res = await fetch('/api/messages/trigger', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          content: `⚠️ Access Request: Dr. Sarah Jenkins requests permission to access your clinical SOAP notes and vitals. Please authorize this request in your ABHA Consent Gateway.`,
+          channel: 'WHATSAPP'
+        })
+      });
+      if (res.ok) {
+        setConsentStatus('REQUESTED');
+        showToast("Immediate access request sent to patient's ABHA Portal!", "success");
+      }
+    } catch (err) {
+      console.error(err);
+      showToast("Failed to request consent.", "error");
+    } finally {
+      setIsRequestingConsent(false);
+    }
+  };
+
+  const handleEmergencyBypass = () => {
+    const confirmBypass = window.confirm(
+      "🚨 CRITICAL COMPLIANCE WARNING:\n\nYou are about to activate emergency 'Break Glass' override to bypass patient consent.\n\nThis will write an immutable record matching your session to the HIPAA Audit Ledger.\n\nProceed?"
+    );
+    if (confirmBypass) {
+      setEmergencyBypass(true);
+      setConsentStatus('GRANTED');
+      setHasConsent(true);
+      try {
+        const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+        if (AudioContextClass) {
+          const ctx = new AudioContextClass();
+          const now = ctx.currentTime;
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.type = 'sawtooth';
+          osc.frequency.setValueAtTime(440, now);
+          osc.frequency.setValueAtTime(880, now + 0.15);
+          gain.gain.setValueAtTime(0.1, now);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + 0.4);
+          osc.connect(gain);
+          gain.connect(ctx.destination);
+          osc.start(now);
+          osc.stop(now + 0.45);
+        }
+      } catch (err) {}
+      fetch(`/api/lab-reports?patientId=${patientId}&emergencyBypass=true`).catch(e => console.error(e));
+      try { triggerNativeHaptic('error'); } catch (err) {}
+      showToast("EMERGENCY BYPASS ACTIVE. Access granted.", "error");
+    }
+  };
+
   const codes = structuredNote ? getClinicalCodes(structuredNote) : null;
 
   const patientId = currentPatient?.visit?.patientId || currentPatient?.patientId || currentPatient?.id || 'pt_michael_chen';
@@ -573,6 +664,33 @@ export default function DoctorMode() {
     };
   }, []);
 
+  // Consent verification and real-time subscription (Phase 14)
+  useEffect(() => {
+    if (patientId) {
+      setEmergencyBypass(false);
+      checkConsent();
+    }
+  }, [patientId]);
+
+  useEffect(() => {
+    if (!patientId) return;
+    
+    const { getPusherClient } = require('@/lib/pusher');
+    const pusher = getPusherClient();
+    if (!pusher || !pusher.subscribe) return;
+
+    const channel = pusher.subscribe(`patient-${patientId}`);
+    channel.bind('consent-updated', (data) => {
+      console.log('Doctor detected consent update:', data);
+      checkConsent();
+    });
+
+    return () => {
+      channel.unbind('consent-updated');
+      pusher.unsubscribe(`patient-${patientId}`);
+    };
+  }, [patientId]);
+
   const toggleListening = () => {
     if (isListening) {
       recognitionRef.current?.stop();
@@ -616,7 +734,7 @@ export default function DoctorMode() {
 
   const handleSignConsultation = async () => {
     showToast("Signing consultation...", "info");
-    await completeConsultation();
+    await completeConsultation(emergencyBypass);
     showToast("Consultation signed and completed!", "success");
     setTranscript("");
     setCleanTranscript("");
@@ -713,30 +831,38 @@ export default function DoctorMode() {
               <div style={{ fontSize: 'var(--font-size-sm)', fontWeight: 600, color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: '6px' }}>
                 🛡️ ABHA Health Locker
               </div>
-              <span className="badge" style={{ fontSize: '9px', backgroundColor: '#dcfce3', color: '#15803d', border: '1px solid #bbf7d0', padding: '2px 8px', fontWeight: 700 }}>
-                SECURE ACCESS
+              <span className="badge" style={{ fontSize: '9px', backgroundColor: hasConsent ? '#dcfce3' : '#fee2e2', color: hasConsent ? '#15803d' : '#be123c', border: hasConsent ? '1px solid #bbf7d0' : '1px solid #fecdd3', padding: '2px 8px', fontWeight: 700 }}>
+                {hasConsent ? 'ACCESS VERIFIED' : 'ACCESS LOCKED'}
               </span>
             </div>
             
-            <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.4 }}>
-              Active chronic home medications retrieved securely from patient's encrypted health record:
-            </p>
-            
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {homeMeds.map((med, idx) => (
-                <div key={idx} style={{ padding: '10px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <div>
-                    <div style={{ fontWeight: 600, fontSize: '12px', color: 'var(--color-text-main)' }}>{med.drugName}</div>
-                    <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
-                      Dosage: {med.dosage} ({med.frequency}) • {med.indication}
+            {!hasConsent && consentStatus !== 'CHECKING' ? (
+              <div style={{ padding: '12px 10px', backgroundColor: '#fff5f5', borderRadius: '8px', border: '1px solid #fecdd3', textAlign: 'center', fontSize: '11px', color: '#9f1239' }}>
+                🔒 Chronic medication history is locked. Please request patient consent to view home medications.
+              </div>
+            ) : (
+              <>
+                <p style={{ fontSize: '11px', color: 'var(--color-text-muted)', margin: 0, lineHeight: 1.4 }}>
+                  Active chronic home medications retrieved securely from patient's encrypted health record:
+                </p>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {homeMeds.map((med, idx) => (
+                    <div key={idx} style={{ padding: '10px', backgroundColor: '#f8fafc', borderRadius: '8px', border: '1px solid var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: '12px', color: 'var(--color-text-main)' }}>{med.drugName}</div>
+                        <div style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginTop: '2px' }}>
+                          Dosage: {med.dosage} ({med.frequency}) • {med.indication}
+                        </div>
+                      </div>
+                      <span style={{ fontSize: '9px', fontFamily: 'monospace', backgroundColor: '#eff6ff', color: '#1e40af', padding: '2px 6px', borderRadius: '4px', border: '1px solid #bfdbfe', fontWeight: 600 }}>
+                        {med.rxNorm}
+                      </span>
                     </div>
-                  </div>
-                  <span style={{ fontSize: '9px', fontFamily: 'monospace', backgroundColor: '#eff6ff', color: '#1e40af', padding: '2px 6px', borderRadius: '4px', border: '1px solid #bfdbfe', fontWeight: 600 }}>
-                    {med.rxNorm}
-                  </span>
+                  ))}
                 </div>
-              ))}
-            </div>
+              </>
+            )}
           </div>
         </div>
 
@@ -758,7 +884,95 @@ export default function DoctorMode() {
             </div>
           </div>
           
-          <div style={{ display: 'flex', gap: 'var(--space-6)', flex: 1, flexDirection: 'column' }}>
+          {!hasConsent && consentStatus !== 'CHECKING' ? (
+            <div style={{ 
+              display: 'flex', 
+              flexDirection: 'column', 
+              alignItems: 'center', 
+              justifyContent: 'center', 
+              padding: '40px 20px', 
+              backgroundColor: '#fafafa', 
+              border: '1px dashed #e2e8f0', 
+              borderRadius: '12px',
+              textAlign: 'center',
+              flex: 1,
+              minHeight: '350px'
+            }}>
+              <div style={{ 
+                width: '64px', 
+                height: '64px', 
+                borderRadius: '50%', 
+                backgroundColor: '#fee2e2', 
+                color: '#ef4444', 
+                display: 'flex', 
+                alignItems: 'center', 
+                justifyContent: 'center',
+                fontSize: '28px',
+                marginBottom: '16px',
+                animation: 'pulse 2s infinite'
+              }}>
+                🔒
+              </div>
+              
+              <h3 style={{ fontSize: '18px', fontWeight: 700, color: '#1e293b', marginBottom: '8px' }}>
+                ABHA Consent Authorization Required
+              </h3>
+              
+              <p style={{ fontSize: '13px', color: '#64748b', maxWidth: '380px', lineHeight: 1.5, marginBottom: '24px' }}>
+                Under federal HIPAA regulations, patient clinical notes and diagnostic details are private. You must obtain consent from <strong>{currentPatient ? currentPatient.name : 'the patient'}</strong> to view this history.
+              </p>
+
+              <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', justifyContent: 'center' }}>
+                <button 
+                  onClick={handleRequestConsent}
+                  disabled={isRequestingConsent || consentStatus === 'REQUESTED'}
+                  className="btn btn-primary"
+                  style={{ 
+                    backgroundColor: consentStatus === 'REQUESTED' ? '#cbd5e1' : '#4f46e5', 
+                    color: 'white', 
+                    fontWeight: 'bold', 
+                    fontSize: '12px', 
+                    padding: '10px 20px', 
+                    borderRadius: '8px', 
+                    cursor: consentStatus === 'REQUESTED' ? 'default' : 'pointer',
+                    border: 'none',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  {consentStatus === 'REQUESTED' ? '⏳ Request Sent to ABHA Hub' : '📲 Request Immediate Access'}
+                </button>
+                
+                <button 
+                  onClick={handleEmergencyBypass}
+                  className="btn btn-outline"
+                  style={{ 
+                    borderColor: '#ef4444', 
+                    color: '#ef4444', 
+                    fontWeight: 'bold', 
+                    fontSize: '12px', 
+                    padding: '10px 20px', 
+                    borderRadius: '8px', 
+                    cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '8px'
+                  }}
+                >
+                  🚨 Break Glass (Emergency Bypass)
+                </button>
+              </div>
+
+              {consentStatus === 'REQUESTED' && (
+                <div style={{ marginTop: '16px', fontSize: '11px', color: '#4f46e5', fontStyle: 'italic', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ width: '6px', height: '6px', backgroundColor: '#4f46e5', borderRadius: '50%', animation: 'pulse 1s infinite' }}></span>
+                  Awaiting patient authorization via their ABHA portal...
+                </div>
+              )}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', gap: 'var(--space-6)', flex: 1, flexDirection: 'column' }}>
             
             {/* Raw Transcript Area */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1172,7 +1386,8 @@ export default function DoctorMode() {
               )}
             </AnimatePresence>
 
-          </div>
+            </div>
+          )}
 
           <div style={{ marginTop: 'var(--space-6)', paddingTop: 'var(--space-4)', borderTop: 'var(--border-light)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
             <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)', display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
@@ -1183,7 +1398,7 @@ export default function DoctorMode() {
             <button 
               className="btn btn-primary" 
               onClick={handleSignConsultation}
-              disabled={!currentPatient}
+              disabled={!currentPatient || !hasConsent}
             >
               Sign & Next Patient
             </button>

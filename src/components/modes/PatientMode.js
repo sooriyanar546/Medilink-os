@@ -93,6 +93,96 @@ export default function PatientMode() {
   const { data: session } = useSession();
   const { queue, messages, loadMessages, isLoadingMessages, showToast } = useHospitalStore();
   const patientId = session?.user?.patientId || session?.user?.id || 'pt_michael_chen';
+  
+  // Consent & Gateway States (Phase 14)
+  const [consents, setConsents] = useState([]);
+  const [consentAuditLogs, setConsentAuditLogs] = useState([]);
+  const [isGrantingConsent, setIsGrantingConsent] = useState(false);
+  const [consentForm, setConsentForm] = useState({
+    accessorId: 'doc_sarah_jenkins',
+    accessorRole: 'DOCTOR',
+    accessLevel: 'CLINICAL',
+    durationHours: '24'
+  });
+
+  const loadConsents = async () => {
+    try {
+      const res = await fetch(`/api/consent?patientId=${patientId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setConsents(data);
+      }
+    } catch (e) {
+      console.error("Failed to load consents", e);
+    }
+  };
+
+  const loadConsentAuditLogs = async () => {
+    try {
+      const res = await fetch('/api/audit');
+      if (res.ok) {
+        const data = await res.json();
+        const patientLogs = data.filter(log => log.patientId === patientId);
+        setConsentAuditLogs(patientLogs);
+      }
+    } catch (e) {
+      console.error("Failed to load audit logs", e);
+    }
+  };
+
+  const handleGrantConsent = async (e) => {
+    e?.preventDefault();
+    setIsGrantingConsent(true);
+    try {
+      const res = await fetch('/api/consent', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          patientId,
+          ...consentForm
+        })
+      });
+      if (res.ok) {
+        showToast(`Verifiable Consent Token generated & signed for ${consentForm.accessorId}!`, 'success');
+        try { triggerNativeHaptic('success'); } catch (err) {}
+        playNavChime();
+        loadConsents();
+        loadConsentAuditLogs();
+      } else {
+        showToast('Failed to grant consent.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error granting consent.', 'error');
+    } finally {
+      setIsGrantingConsent(false);
+    }
+  };
+
+  const handleRevokeConsent = async (consentId) => {
+    try {
+      const res = await fetch('/api/consent', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          consentId,
+          action: 'REVOKE'
+        })
+      });
+      if (res.ok) {
+        showToast('Consent revoked. Verification token invalidated.', 'info');
+        try { triggerNativeHaptic('light'); } catch (err) {}
+        loadConsents();
+        loadConsentAuditLogs();
+      } else {
+        showToast('Failed to revoke consent.', 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error revoking consent.', 'error');
+    }
+  };
+
   const [isStressReduction, setIsStressReduction] = useState(false);
   const [translatedReport, setTranslatedReport] = useState(null);
   const [isLoadingReport, setIsLoadingReport] = useState(true);
@@ -285,6 +375,8 @@ If you would like a personalized clinical meal plan, you can book an appointment
 
   useEffect(() => {
     fetchReports();
+    loadConsents();
+    loadConsentAuditLogs();
   }, [patientId]);
 
   const simulateLabPush = async () => {
@@ -376,12 +468,19 @@ If you would like a personalized clinical meal plan, you can book an appointment
       }
     });
 
+    channel.bind('consent-updated', (data) => {
+      console.log('Consent status changed!', data);
+      loadConsents();
+      loadConsentAuditLogs();
+    });
+
     return () => {
       channel.unbind('message-received');
       channel.unbind('prescription-ready');
       channel.unbind('compliance-checked');
       channel.unbind('compliance-snoozed');
       channel.unbind('compliance-reminded');
+      channel.unbind('consent-updated');
       pusher.unsubscribe(channelName);
     };
   }, [patientId]);
@@ -1386,6 +1485,202 @@ If you would like a personalized clinical meal plan, you can book an appointment
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          {/* ABHA Consent & Data Gateway (Phase 14) */}
+          <div className="card" style={{ borderLeft: '4px solid #4f46e5', background: 'linear-gradient(to right, #faf5ff, #ffffff)', padding: cardPadding }}>
+            <div className="card-header" style={{ marginBottom: '12px' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', fontSize: 'var(--font-size-base)', fontWeight: 600 }}>
+                <ShieldCheck color="#4f46e5" size={20} />
+                ABHA Consent & Data Gateway
+              </div>
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+              
+              {/* Grant New Consent Form */}
+              <form onSubmit={handleGrantConsent} style={{ backgroundColor: 'white', padding: '14px', borderRadius: '8px', border: '1px solid #e9d5ff', display: 'flex', flexDirection: 'column', gap: '10px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 'bold', color: '#6b21a8', textTransform: 'uppercase', marginBottom: '2px' }}>
+                  Authorize Clinical Access
+                </div>
+                
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div>
+                    <label style={{ fontSize: '10px', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Accessor / Entity</label>
+                    <select 
+                      value={consentForm.accessorId} 
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        let role = 'DOCTOR';
+                        if (val === 'pharmacy_counter') role = 'PHARMACIST';
+                        if (val === 'cashier_counter') role = 'CASHIER';
+                        if (val === '*') role = 'DOCTOR';
+                        setConsentForm(prev => ({ ...prev, accessorId: val, accessorRole: role }));
+                      }}
+                      style={{ width: '100%', padding: '6px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                    >
+                      <option value="doc_sarah_jenkins">Dr. Sarah Jenkins (Cardiology)</option>
+                      <option value="doc_patel">Dr. Patel (Internal Med)</option>
+                      <option value="pharmacy_counter">Pharmacy Counter</option>
+                      <option value="cashier_counter">Cashier Counter</option>
+                      <option value="*">Any Clinician (Wildcard)</option>
+                    </select>
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '10px', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Access Level</label>
+                    <select 
+                      value={consentForm.accessLevel} 
+                      onChange={(e) => setConsentForm(prev => ({ ...prev, accessLevel: e.target.value }))}
+                      style={{ width: '100%', padding: '6px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                    >
+                      <option value="CLINICAL">CLINICAL (SOAP & Vitals)</option>
+                      <option value="MEDICATION">MEDICATION (Prescriptions)</option>
+                      <option value="BILLING">BILLING (Financial Claims)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '8px' }}>
+                  <div>
+                    <label style={{ fontSize: '10px', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Accessor Role</label>
+                    <input 
+                      type="text" 
+                      value={consentForm.accessorRole} 
+                      disabled 
+                      style={{ width: '100%', padding: '6px', fontSize: '11px', borderRadius: '4px', border: '1px solid #e2e8f0', backgroundColor: '#f8fafc', color: '#64748b', fontWeight: 'bold' }}
+                    />
+                  </div>
+
+                  <div>
+                    <label style={{ fontSize: '10px', color: '#64748b', display: 'block', marginBottom: '2px', fontWeight: 600 }}>Token Duration</label>
+                    <select 
+                      value={consentForm.durationHours} 
+                      onChange={(e) => setConsentForm(prev => ({ ...prev, durationHours: e.target.value }))}
+                      style={{ width: '100%', padding: '6px', fontSize: '11px', borderRadius: '4px', border: '1px solid #cbd5e1' }}
+                    >
+                      <option value="1">1 Hour (Urgent Check)</option>
+                      <option value="24">24 Hours (Standard Visit)</option>
+                      <option value="168">7 Days (Continuous Care)</option>
+                      <option value="720">30 Days (Chronic Plan)</option>
+                    </select>
+                  </div>
+                </div>
+
+                <button 
+                  type="submit" 
+                  disabled={isGrantingConsent}
+                  className="btn btn-primary" 
+                  style={{ backgroundColor: '#4f46e5', color: 'white', fontSize: '11px', padding: '8px', width: '100%', marginTop: '4px', fontWeight: 'bold', borderRadius: '6px', cursor: 'pointer' }}
+                >
+                  {isGrantingConsent ? 'Signing Cryptographic Token...' : '🔐 Sign & Grant Secure Access'}
+                </button>
+              </form>
+
+              {/* Active Consents List */}
+              <div>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: '#4f46e5', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
+                  Active Access Permits
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  {consents.filter(c => c.status === 'ACTIVE' && new Date(c.expiresAt) > new Date()).length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '14px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid #f3e8ff', color: '#7c3aed', fontSize: '11px', fontStyle: 'italic', fontWeight: 500 }}>
+                      🛡️ All access lists are clear. Your clinical database locker is fully secured.
+                    </div>
+                  ) : (
+                    consents
+                      .filter(c => c.status === 'ACTIVE' && new Date(c.expiresAt) > new Date())
+                      .map((c) => (
+                        <div key={c.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'white', border: '1px solid #f3e8ff', borderRadius: '8px', padding: '10px 12px' }}>
+                          <div>
+                            <div style={{ fontSize: '12px', fontWeight: 'bold', color: '#1e1b4b' }}>
+                              {c.accessorId === '*' ? 'Wildcard Permit (Any Clinician)' : `Permit ID: ${c.accessorId}`}
+                            </div>
+                            <div style={{ fontSize: '10px', color: '#581c87', marginTop: '2px', display: 'flex', gap: '6px', alignItems: 'center' }}>
+                              <span style={{ backgroundColor: '#f3e8ff', padding: '1px 6px', borderRadius: '50px', fontWeight: 'bold' }}>{c.accessLevel}</span>
+                              <span>Role: {c.accessorRole}</span>
+                            </div>
+                            <div style={{ fontSize: '9px', color: '#94a3b8', marginTop: '4px', fontFamily: 'Courier, monospace' }}>
+                              Signature: {c.consentToken.substring(0, 16)}...
+                            </div>
+                            <div style={{ fontSize: '9px', color: '#ef4444', marginTop: '2px', fontWeight: 'bold' }}>
+                              Expires: {new Date(c.expiresAt).toLocaleString()}
+                            </div>
+                          </div>
+                          
+                          <button
+                            onClick={() => handleRevokeConsent(c.id)}
+                            style={{
+                              backgroundColor: '#fee2e2',
+                              color: '#991b1b',
+                              border: '1px solid #fca5a5',
+                              padding: '4px 8px',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              fontWeight: 'bold',
+                              cursor: 'pointer',
+                              transition: 'all 0.2s'
+                            }}
+                            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = '#fca5a5'; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = '#fee2e2'; }}
+                          >
+                            Revoke 🔏
+                          </button>
+                        </div>
+                      ))
+                  )}
+                </div>
+              </div>
+
+              {/* Real-time Data Access Audit Log */}
+              <div style={{ borderTop: '1px dashed #d8b4fe', paddingTop: '12px' }}>
+                <div style={{ fontSize: '11px', fontWeight: 600, color: '#4f46e5', textTransform: 'uppercase', marginBottom: '8px', letterSpacing: '0.05em' }}>
+                  HIPAA Access Audit Trail (Live Gateway Logs)
+                </div>
+                
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', maxHeight: '180px', overflowY: 'auto' }}>
+                  {consentAuditLogs.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '10px', color: '#94a3b8', fontSize: '10px' }}>
+                      No record queries processed yet.
+                    </div>
+                  ) : (
+                    consentAuditLogs.map((log) => {
+                      const isBypass = log.action === 'EMERGENCY_CONSENT_BYPASS';
+                      return (
+                        <div 
+                          key={log.id} 
+                          style={{ 
+                            fontSize: '10px', 
+                            padding: '8px', 
+                            borderRadius: '6px', 
+                            backgroundColor: isBypass ? '#fef2f2' : 'white', 
+                            border: isBypass ? '1px solid #fecaca' : '1px solid #f3e8ff',
+                            color: isBypass ? '#991b1b' : '#334155' 
+                          }}
+                        >
+                          <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold' }}>
+                            <span>{isBypass ? '⚠️ EMERGENCY ACCESS BYPASS' : log.action.replace('_', ' ')}</span>
+                            <span style={{ color: '#94a3b8', fontSize: '9px' }}>
+                              {new Date(log.timestamp).toLocaleTimeString()}
+                            </span>
+                          </div>
+                          <div style={{ marginTop: '2px', color: '#64748b' }}>
+                            Queried by: <strong>{log.userName} ({log.role})</strong>
+                          </div>
+                          {log.details && (
+                            <div style={{ fontSize: '9px', fontStyle: 'italic', marginTop: '2px', color: isBypass ? '#ef4444' : '#7c3aed' }}>
+                              Payload: {JSON.stringify(log.details)}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+
             </div>
           </div>
           {/* MediBuddy Floating Calm Care Chatbot */}
