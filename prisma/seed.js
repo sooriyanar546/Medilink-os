@@ -199,6 +199,40 @@ async function main() {
     }
   });
 
+  // 8. Seed Ward Beds
+  console.log('Seeding Ward Beds...');
+  await prisma.wardBed.deleteMany();
+  
+  const bedsData = [
+    // ICU
+    { name: 'ICU-01', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
+    { name: 'ICU-02', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
+    { name: 'ICU-03', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
+    { name: 'ICU-04', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
+    
+    // ER
+    { name: 'ER-01', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
+    { name: 'ER-02', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
+    { name: 'ER-03', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
+    { name: 'ER-04', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
+    
+    // GENERAL
+    { name: 'GEN-01', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Window view' },
+    { name: 'GEN-02', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Near nurse station' },
+    { name: 'GEN-03', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Near nurse station' },
+    { name: 'GEN-04', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Recuperative care' },
+    
+    // ISOLATION
+    { name: 'ISO-01', wardType: 'ISOLATION', status: 'AVAILABLE', ventilator: false, notes: 'Negative pressure room' },
+    { name: 'ISO-02', wardType: 'ISOLATION', status: 'AVAILABLE', ventilator: false, notes: 'Negative pressure room' }
+  ];
+
+  for (const bed of bedsData) {
+    await prisma.wardBed.create({
+      data: bed
+    });
+  }
+
   console.log('Seeding finished.');
 }
 

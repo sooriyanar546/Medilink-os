@@ -102,6 +102,7 @@ model Patient {
   blockchain      BlockchainRecord[]
   snoozedReminders SnoozedReminder[]
   consents        PatientConsent[]
+  bed             WardBed?
 }
 
 model Doctor {
@@ -386,5 +387,36 @@ model PatientConsent {
 
   @@index([patientId, status])
   @@index([accessorId, status])
+}
+
+// ============================================================
+// WARD BED MANAGEMENT (PHASE 15)
+// ============================================================
+
+enum BedType {
+  ICU
+  ER
+  GENERAL
+  ISOLATION
+}
+
+enum BedStatus {
+  AVAILABLE
+  OCCUPIED
+  MAINTENANCE
+  RESERVED
+}
+
+model WardBed {
+  id          String    @id @default(cuid())
+  name        String    @unique // e.g. "ICU-01"
+  wardType    BedType
+  status      BedStatus @default(AVAILABLE)
+  ventilator  Boolean   @default(false)
+  notes       String?
+  patientId   String?   @unique
+  patient     Patient?  @relation(fields: [patientId], references: [id])
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
 }
 

@@ -1,11 +1,12 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, Activity, TrendingDown, TrendingUp, Cpu, HeartPulse, BrainCircuit, Users, Navigation, Flame, Zap, CheckCircle2, FileText, AlertTriangle, RefreshCw } from 'lucide-react';
+import { ShieldAlert, Activity, TrendingDown, TrendingUp, Cpu, HeartPulse, BrainCircuit, Users, Navigation, Flame, Zap, CheckCircle2, FileText, AlertTriangle, RefreshCw, Bed, Check, X, Plus, Settings, Heart } from 'lucide-react';
 import { useHospitalQueue } from '@/hooks/useHospitalQueue';
 import { useOperationalMetrics } from '@/hooks/useOperationalMetrics';
 import { useHospitalStore } from '@/store/useHospitalStore';
 import { motion, AnimatePresence } from 'framer-motion';
+import { triggerNativeHaptic } from '@/lib/native';
 
 export default function AdminMode() {
   const { queue } = useHospitalQueue();
@@ -18,6 +19,292 @@ export default function AdminMode() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [remediatedRooms, setRemediatedRooms] = useState({});
+
+  // Ward Beds Management & Acuity Triage States
+  const [beds, setBeds] = useState([]);
+  const [isLoadingBeds, setIsLoadingBeds] = useState(true);
+  const [selectedBed, setSelectedBed] = useState(null);
+  const [activeWardFilter, setActiveWardFilter] = useState('ALL');
+  const [editStatus, setEditStatus] = useState('AVAILABLE');
+  const [editNotes, setEditNotes] = useState('');
+  const [editVentilator, setEditVentilator] = useState(false);
+  const [editPatientId, setEditPatientId] = useState('');
+  const [isSavingBed, setIsSavingBed] = useState(false);
+
+  const calculateAcuity = (vitals, reason = '') => {
+    if (!vitals) return { score: 0, details: ['No vitals recorded'], classification: 'STABLE' };
+    
+    let score = 0;
+    const details = [];
+
+    // Systolic BP: e.g. "120/80" or "90/60"
+    let sbp = null;
+    if (vitals.bp && typeof vitals.bp === 'string') {
+      const parts = vitals.bp.split('/');
+      if (parts.length > 0) {
+        const parsedSbp = parseInt(parts[0]);
+        if (!isNaN(parsedSbp)) sbp = parsedSbp;
+      }
+    } else if (vitals.sbp) {
+      sbp = parseInt(vitals.sbp);
+    }
+
+    if (sbp !== null && sbp <= 100) {
+      score += 1;
+      details.push('Hypotension (Systolic BP ≤ 100 mmHg)');
+    }
+
+    // Heart Rate
+    const hr = parseInt(vitals.hr || vitals.heartRate);
+    if (!isNaN(hr) && hr >= 110) {
+      score += 1;
+      details.push('Tachycardia (HR ≥ 110 bpm)');
+    }
+
+    // Oxygen Saturation
+    const spo2 = parseInt(vitals.spo2 || vitals.spO2 || vitals.oxygenSaturation);
+    if (!isNaN(spo2) && spo2 <= 93) {
+      score += 1;
+      details.push('Hypoxemia (SpO2 ≤ 93%)');
+    }
+
+    // Temperature (SIRS criteria)
+    const temp = parseFloat(vitals.temp || vitals.temperature);
+    if (!isNaN(temp) && (temp >= 101.5 || temp <= 95.0)) {
+      score += 1;
+      details.push(`Temp anomaly (${temp}°F)`);
+    }
+
+    // Chief Complaint Severity
+    const criticalComplaintKeywords = ['chest pain', 'radiating', 'palpitations', 'cardiac', 'shortness of breath', 'difficulty breathing', 'unconscious', 'stroke', 'fracture', 'trauma'];
+    const complaintLower = reason?.toLowerCase() || '';
+    const isCriticalComplaint = criticalComplaintKeywords.some(keyword => complaintLower.includes(keyword));
+    if (isCriticalComplaint) {
+      score += 1;
+      details.push('Critical Chief Complaint');
+    }
+
+    let classification = 'STABLE';
+    if (score >= 3) classification = 'CRITICAL';
+    else if (score === 2) classification = 'HIGH RISK';
+
+    return { score, details, classification };
+  };
+
+  const playChime = () => {
+    try {
+      const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+      if (!AudioContextClass) return;
+      const ctx = new AudioContextClass();
+      const now = ctx.currentTime;
+      
+      const osc1 = ctx.createOscillator();
+      const gain1 = ctx.createGain();
+      osc1.type = 'sine';
+      osc1.frequency.setValueAtTime(880, now);
+      gain1.gain.setValueAtTime(0.1, now);
+      gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
+      osc1.connect(gain1);
+      gain1.connect(ctx.destination);
+      
+      const osc2 = ctx.createOscillator();
+      const gain2 = ctx.createGain();
+      osc2.type = 'sine';
+      osc2.frequency.setValueAtTime(1109.73, now + 0.08);
+      gain2.gain.setValueAtTime(0.1, now + 0.08);
+      gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.45);
+      osc2.connect(gain2);
+      gain2.connect(ctx.destination);
+      
+      osc1.start(now);
+      osc1.stop(now + 0.25);
+      osc2.start(now + 0.08);
+      osc2.stop(now + 0.45);
+    } catch (e) {
+      console.error("Audio chime failed", e);
+    }
+  };
+
+  const fetchBeds = async () => {
+    try {
+      const res = await fetch('/api/beds');
+      if (!res.ok) throw new Error('Failed to fetch beds');
+      const data = await res.json();
+      if (Array.isArray(data)) {
+        setBeds(data);
+      }
+    } catch (err) {
+      console.error('Error fetching beds:', err);
+    } finally {
+      setIsLoadingBeds(false);
+    }
+  };
+
+  const handleAutoDispatch = async (patient) => {
+    const acuity = calculateAcuity(patient.vitals, patient.reason);
+    let recommendedWardType = 'GENERAL';
+    if (acuity.score >= 3) {
+      recommendedWardType = 'ICU';
+    } else if (acuity.score === 2) {
+      recommendedWardType = 'ER';
+    }
+
+    // Find first available bed of the recommended type
+    let targetBed = beds.find(b => b.wardType === recommendedWardType && b.status === 'AVAILABLE');
+    
+    // Fallback search in order of criticality if recommended type is full
+    if (!targetBed) {
+      if (recommendedWardType === 'ICU') {
+        targetBed = beds.find(b => ['ER', 'GENERAL', 'ISOLATION'].includes(b.wardType) && b.status === 'AVAILABLE');
+      } else if (recommendedWardType === 'ER') {
+        targetBed = beds.find(b => ['GENERAL', 'ICU', 'ISOLATION'].includes(b.wardType) && b.status === 'AVAILABLE');
+      } else {
+        targetBed = beds.find(b => ['ISOLATION', 'ER', 'ICU'].includes(b.wardType) && b.status === 'AVAILABLE');
+      }
+    }
+
+    if (!targetBed) {
+      useHospitalStore.getState().showToast(`No available beds found for auto-dispatch! All wards are currently full.`, 'error');
+      try {
+        await triggerNativeHaptic('error');
+      } catch (e) {}
+      return;
+    }
+
+    try {
+      const showToast = useHospitalStore.getState().showToast;
+      const res = await fetch('/api/beds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'ALLOCATE',
+          bedId: targetBed.id,
+          patientId: patient.id
+        })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Auto-dispatched ${patient.name} to ${targetBed.name} (${targetBed.wardType}) successfully!`, 'success');
+        playChime();
+        try {
+          await triggerNativeHaptic('success');
+        } catch (e) {}
+        
+        fetchBeds();
+        useHospitalStore.getState().loadQueue();
+      } else {
+        showToast(`Auto-dispatch failed: ${data.error}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      useHospitalStore.getState().showToast(`Error performing auto-dispatch`, 'error');
+    }
+  };
+
+  const handleOpenBedModal = (bed) => {
+    setSelectedBed(bed);
+    setEditStatus(bed.status);
+    setEditNotes(bed.notes || '');
+    setEditVentilator(bed.ventilator);
+    setEditPatientId(bed.patientId || '');
+  };
+
+  const handleSaveBedConfig = async () => {
+    if (!selectedBed) return;
+    setIsSavingBed(true);
+    const showToast = useHospitalStore.getState().showToast;
+    try {
+      let res;
+      let success = false;
+      let errorMsg = '';
+
+      if (editStatus === 'AVAILABLE' && selectedBed.status === 'OCCUPIED') {
+        res = await fetch('/api/beds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'RELEASE', bedId: selectedBed.id })
+        });
+        const data = await res.json();
+        success = data.success;
+        errorMsg = data.error;
+      } else if (editStatus === 'OCCUPIED' && editPatientId && selectedBed.patientId !== editPatientId) {
+        res = await fetch('/api/beds', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'ALLOCATE', bedId: selectedBed.id, patientId: editPatientId })
+        });
+        const data = await res.json();
+        success = data.success;
+        errorMsg = data.error;
+
+        if (success && (editVentilator !== selectedBed.ventilator || editNotes !== selectedBed.notes)) {
+          await fetch('/api/beds', {
+            method: 'PATCH',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ bedId: selectedBed.id, ventilator: editVentilator, notes: editNotes })
+          });
+        }
+      } else {
+        res = await fetch('/api/beds', {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            bedId: selectedBed.id,
+            status: editStatus,
+            ventilator: editVentilator,
+            notes: editNotes
+          })
+        });
+        const data = await res.json();
+        success = data.success;
+        errorMsg = data.error;
+      }
+
+      if (success) {
+        showToast(`Bed ${selectedBed.name} updated successfully!`, 'success');
+        playChime();
+        try {
+          await triggerNativeHaptic('success');
+        } catch (e) {}
+        setSelectedBed(null);
+        fetchBeds();
+        useHospitalStore.getState().loadQueue();
+      } else {
+        showToast(`Failed to update bed: ${errorMsg}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error saving bed configurations', 'error');
+    } finally {
+      setIsSavingBed(false);
+    }
+  };
+
+  const handleQuickRelease = async (bedId) => {
+    const showToast = useHospitalStore.getState().showToast;
+    try {
+      const res = await fetch('/api/beds', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'RELEASE', bedId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Bed released successfully', 'success');
+        playChime();
+        try {
+          await triggerNativeHaptic('success');
+        } catch (e) {}
+        fetchBeds();
+        useHospitalStore.getState().loadQueue();
+      } else {
+        showToast(`Failed to release bed: ${data.error}`, 'error');
+      }
+    } catch (err) {
+      console.error(err);
+      showToast('Error releasing bed', 'error');
+    }
+  };
 
   const handleDispatchRemediation = (roomName) => {
     const showToast = useHospitalStore.getState().showToast;
@@ -81,11 +368,16 @@ export default function AdminMode() {
   useEffect(() => {
     fetchClaims();
     fetchAuditLogs();
+    fetchBeds();
     const interval = setInterval(() => {
       fetchAuditLogs();
     }, 10000);
     return () => clearInterval(interval);
   }, []);
+
+  useEffect(() => {
+    fetchBeds();
+  }, [queue]);
 
   const waitingCount = queue.filter(v => v.status === 'WAITING').length;
   const isBottleneck = waitingCount > 2;
@@ -348,6 +640,131 @@ export default function AdminMode() {
             </div>
           </div>
 
+          {/* Interactive Ward Bed Matrix Panel */}
+          <div className="card">
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-4)' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Bed size={18} color="var(--color-primary)" />
+                Ward Bed Occupancy Matrix
+              </div>
+              <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', fontWeight: 600 }}>
+                {beds.filter(b => b.status === 'OCCUPIED').length} / {beds.length} Occupied
+              </span>
+            </div>
+
+            {/* Ward Filter Tabs */}
+            <div style={{ display: 'flex', gap: '8px', marginBottom: '16px', flexWrap: 'wrap' }}>
+              {['ALL', 'ICU', 'ER', 'GENERAL', 'ISOLATION'].map((tab) => (
+                <button
+                  key={tab}
+                  onClick={() => setActiveWardFilter(tab)}
+                  className="btn"
+                  style={{
+                    fontSize: '11px',
+                    padding: '4px 10px',
+                    backgroundColor: activeWardFilter === tab ? 'var(--color-primary)' : 'transparent',
+                    borderColor: activeWardFilter === tab ? 'var(--color-primary)' : 'var(--border-light)',
+                    color: activeWardFilter === tab ? 'white' : 'var(--color-text-main)',
+                    borderRadius: '50px'
+                  }}
+                >
+                  {tab} ({tab === 'ALL' ? beds.length : beds.filter(b => b.wardType === tab).length})
+                </button>
+              ))}
+            </div>
+
+            {/* Beds Grid */}
+            {isLoadingBeds ? (
+              <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', padding: '24px' }}>Loading beds...</div>
+            ) : (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(135px, 1fr))', gap: '12px' }}>
+                {beds
+                  .filter(b => activeWardFilter === 'ALL' || b.wardType === activeWardFilter)
+                  .map((bed) => {
+                    const statusColor = 
+                      bed.status === 'AVAILABLE' ? '#10b981' :
+                      bed.status === 'OCCUPIED' ? '#3b82f6' :
+                      bed.status === 'MAINTENANCE' ? '#f59e0b' :
+                      '#8b5cf6';
+
+                    const bgGradient = 
+                      bed.status === 'AVAILABLE' ? 'linear-gradient(135deg, rgba(16, 185, 129, 0.08), rgba(16, 185, 129, 0.02))' :
+                      bed.status === 'OCCUPIED' ? 'linear-gradient(135deg, rgba(59, 130, 246, 0.08), rgba(59, 130, 246, 0.02))' :
+                      bed.status === 'MAINTENANCE' ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.08), rgba(245, 158, 11, 0.02))' :
+                      'linear-gradient(135deg, rgba(139, 92, 246, 0.08), rgba(139, 92, 246, 0.02))';
+
+                    const borderStyle = `1px solid ${
+                      bed.status === 'AVAILABLE' ? 'rgba(16, 185, 129, 0.3)' :
+                      bed.status === 'OCCUPIED' ? 'rgba(59, 130, 246, 0.3)' :
+                      bed.status === 'MAINTENANCE' ? 'rgba(245, 158, 11, 0.3)' :
+                      'rgba(139, 92, 246, 0.3)'
+                    }`;
+
+                    return (
+                      <motion.div
+                        key={bed.id}
+                        whileHover={{ scale: 1.02 }}
+                        onClick={() => handleOpenBedModal(bed)}
+                        style={{
+                          background: bgGradient,
+                          border: borderStyle,
+                          borderRadius: '12px',
+                          padding: '12px',
+                          cursor: 'pointer',
+                          display: 'flex',
+                          flexDirection: 'column',
+                          justifyContent: 'space-between',
+                          minHeight: '110px',
+                          position: 'relative',
+                          boxShadow: 'var(--shadow-sm)'
+                        }}
+                      >
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontWeight: 700, fontSize: '12px', color: 'var(--color-text-main)' }}>{bed.name}</span>
+                          <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>{bed.wardType}</span>
+                        </div>
+
+                        {bed.ventilator && (
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '4px', marginTop: '4px' }}>
+                            <motion.span 
+                              animate={{ scale: [1, 1.4, 1], opacity: [1, 0.6, 1] }}
+                              transition={{ repeat: Infinity, duration: 2 }}
+                              style={{ width: '6px', height: '6px', backgroundColor: '#ef4444', borderRadius: '50%' }}
+                            />
+                            <span style={{ fontSize: '9px', fontWeight: 700, color: '#ef4444' }}>VENT ACTIVE</span>
+                          </div>
+                        )}
+
+                        <div style={{ marginTop: '8px' }}>
+                          {bed.status === 'OCCUPIED' && bed.patient ? (
+                            <div>
+                              <div style={{ fontSize: '11px', fontWeight: 600, color: 'var(--color-text-main)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                                {bed.patient.name}
+                              </div>
+                              <div style={{ fontSize: '9px', color: 'var(--color-text-muted)' }}>
+                                qSOFA: {calculateAcuity(bed.patient.visits?.[0]?.vitals, bed.patient.visits?.[0]?.reason).score}/5
+                              </div>
+                            </div>
+                          ) : (
+                            <div style={{ fontSize: '10px', color: statusColor, fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px' }}>
+                              <span style={{ width: '6px', height: '6px', backgroundColor: statusColor, borderRadius: '50%' }} />
+                              {bed.status}
+                            </div>
+                          )}
+                        </div>
+
+                        {bed.notes && (
+                          <div style={{ position: 'absolute', bottom: '6px', right: '8px', fontSize: '10px' }} title={bed.notes}>
+                            📝
+                          </div>
+                        )}
+                      </motion.div>
+                    );
+                  })}
+              </div>
+            )}
+          </div>
+
           {/* Revenue Protection & Claim Intelligence */}
           <div className="card">
             <div className="card-header" style={{ marginBottom: 'var(--space-4)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -476,6 +893,135 @@ export default function AdminMode() {
 
         {/* Right Column: Autonomous Orchestration & Finance */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
+
+          {/* Triage Dispatch Advisor Panel */}
+          <div className="card" style={{ border: '1px solid rgba(239, 68, 68, 0.2)', backgroundColor: '#fff8f8' }}>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#b91c1c' }}>
+                <ShieldAlert size={20} color="#b91c1c" />
+                Triage Dispatch Advisor
+              </div>
+              <span className="badge" style={{ backgroundColor: '#fee2e2', color: '#b91c1c', fontSize: '10px' }}>
+                Live Acuity Scanner
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {queue.filter(p => p.status === 'waiting').length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '16px' }}>
+                  No waiting patients in OPD queue.
+                </div>
+              ) : (
+                queue.filter(p => p.status === 'waiting').map((patient) => {
+                  const acuity = calculateAcuity(patient.vitals, patient.reason);
+                  const isCritical = acuity.score >= 3;
+                  const isHighRisk = acuity.score === 2;
+
+                  let badgeBg = '#f0fdf4';
+                  let badgeText = '#166534';
+                  let recWard = 'General Ward';
+                  let recWardType = 'GENERAL';
+
+                  if (isCritical) {
+                    badgeBg = '#fee2e2';
+                    badgeText = '#991b1b';
+                    recWard = 'ICU Ward Bed';
+                    recWardType = 'ICU';
+                  } else if (isHighRisk) {
+                    badgeBg = '#fef3c7';
+                    badgeText = '#92400e';
+                    recWard = 'ER Bay Bed';
+                    recWardType = 'ER';
+                  }
+
+                  const availableBedsCount = beds.filter(b => b.wardType === recWardType && b.status === 'AVAILABLE').length;
+
+                  return (
+                    <div
+                      key={patient.visitId}
+                      style={{
+                        backgroundColor: 'white',
+                        border: `1px solid ${isCritical ? '#fca5a5' : isHighRisk ? '#fde047' : '#cbd5e1'}`,
+                        borderRadius: '10px',
+                        padding: '12px',
+                        boxShadow: 'var(--shadow-sm)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--color-text-main)' }}>
+                            {patient.name}
+                          </span>
+                          <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: '6px' }}>
+                            Pos #{patient.queuePosition}
+                          </span>
+                        </div>
+                        <span
+                          className="badge"
+                          style={{
+                            backgroundColor: badgeBg,
+                            color: badgeText,
+                            fontSize: '9px',
+                            fontWeight: 700
+                          }}
+                        >
+                          {acuity.classification} (Score: {acuity.score}/5)
+                        </span>
+                      </div>
+
+                      <div style={{ backgroundColor: '#f8fafc', padding: '6px 10px', borderRadius: '6px', fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+                        <div style={{ color: 'var(--color-text-main)', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                          <span>BP: <strong style={{ color: (parseInt(patient.vitals?.bp?.split('/')?.[0]) <= 100) ? '#dc2626' : 'inherit' }}>{patient.vitals?.bp || 'N/A'}</strong></span>
+                          <span>HR: <strong style={{ color: (parseInt(patient.vitals?.hr) >= 110) ? '#dc2626' : 'inherit' }}>{patient.vitals?.hr || 'N/A'} bpm</strong></span>
+                          <span>SpO2: <strong style={{ color: (parseInt(patient.vitals?.spo2) <= 93) ? '#dc2626' : 'inherit' }}>{patient.vitals?.spo2 || 'N/A'}%</strong></span>
+                          <span>Temp: <strong style={{ color: (parseFloat(patient.vitals?.temp) >= 101.5 || parseFloat(patient.vitals?.temp) <= 95) ? '#dc2626' : 'inherit' }}>{patient.vitals?.temp || 'N/A'}°F</strong></span>
+                        </div>
+                        <div style={{ color: 'var(--color-text-muted)', fontSize: '10px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                          Complaint: <strong>{patient.reason}</strong>
+                        </div>
+                        {acuity.details.length > 0 && (
+                          <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap', marginTop: '2px' }}>
+                            {acuity.details.map((d, i) => (
+                              <span key={i} style={{ fontSize: '9px', backgroundColor: '#fee2e2', color: '#991b1b', padding: '1px 6px', borderRadius: '4px' }}>
+                                {d}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px' }}>
+                        <div style={{ fontSize: '11px' }}>
+                          <span style={{ color: 'var(--color-text-muted)' }}>Rec: </span>
+                          <strong style={{ color: isCritical ? '#991b1b' : isHighRisk ? '#92400e' : 'var(--color-text-main)' }}>{recWard}</strong>
+                          <span style={{ fontSize: '10px', color: '#64748b', marginLeft: '4px' }}>
+                            ({availableBedsCount} available)
+                          </span>
+                        </div>
+                        <button
+                          onClick={() => handleAutoDispatch(patient)}
+                          className="btn btn-primary"
+                          style={{
+                            fontSize: '11px',
+                            padding: '6px 12px',
+                            backgroundColor: isCritical ? '#b91c1c' : isHighRisk ? '#d97706' : 'var(--color-primary)',
+                            borderColor: isCritical ? '#b91c1c' : isHighRisk ? '#d97706' : 'var(--color-primary)',
+                            color: 'white',
+                            borderRadius: '6px'
+                          }}
+                        >
+                          Auto-Dispatch
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
           
           {/* Autonomous Flow Orchestrator */}
           <div className="card" style={{ border: '2px solid var(--color-primary-light)', background: 'linear-gradient(to bottom, #f0f9ff, #ffffff)' }}>
@@ -645,6 +1191,217 @@ export default function AdminMode() {
 
         </div>
       </div>
+
+      {/* Bed Control Modal */}
+      <AnimatePresence>
+        {selectedBed && (
+          <div style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(15, 23, 42, 0.6)',
+            backdropFilter: 'blur(4px)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            zIndex: 9999,
+            padding: '24px'
+          }}>
+            <motion.div
+              initial={{ opacity: 0, scale: 0.95, y: 10 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 10 }}
+              style={{
+                backgroundColor: 'white',
+                border: '1px solid var(--border-light)',
+                borderRadius: '16px',
+                width: '100%',
+                maxWidth: '460px',
+                padding: '24px',
+                boxShadow: 'var(--shadow-lg)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '16px'
+              }}
+            >
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid #e2e8f0', paddingBottom: '12px' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Bed size={20} color="var(--color-primary)" />
+                  <div>
+                    <h3 style={{ fontSize: '16px', fontWeight: 700, color: 'var(--color-text-main)', margin: 0 }}>
+                      Manage Bed {selectedBed.name}
+                    </h3>
+                    <span style={{ fontSize: '11px', color: 'var(--color-text-muted)', textTransform: 'uppercase', fontWeight: 600 }}>
+                      {selectedBed.wardType} Ward Resource
+                    </span>
+                  </div>
+                </div>
+                <button
+                  onClick={() => setSelectedBed(null)}
+                  style={{ background: 'transparent', border: 'none', cursor: 'pointer', color: 'var(--color-text-muted)' }}
+                >
+                  <X size={20} />
+                </button>
+              </div>
+
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '6px' }}>
+                    Bed Status
+                  </label>
+                  <select
+                    value={editStatus}
+                    onChange={(e) => {
+                      setEditStatus(e.target.value);
+                      if (e.target.value !== 'OCCUPIED') {
+                        setEditPatientId('');
+                      }
+                    }}
+                    style={{
+                      width: '100%',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '13px',
+                      backgroundColor: 'white',
+                      color: 'var(--color-text-main)'
+                    }}
+                  >
+                    <option value="AVAILABLE">AVAILABLE</option>
+                    <option value="OCCUPIED">OCCUPIED / ASSIGNED</option>
+                    <option value="MAINTENANCE">MAINTENANCE</option>
+                    <option value="RESERVED">RESERVED</option>
+                  </select>
+                </div>
+
+                {editStatus === 'OCCUPIED' && (
+                  <div>
+                    <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '6px' }}>
+                      Assign Patient
+                    </label>
+                    {selectedBed.status === 'OCCUPIED' && selectedBed.patient ? (
+                      <div style={{ padding: '10px 12px', backgroundColor: '#f1f5f9', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <div style={{ fontWeight: 600, color: 'var(--color-text-main)' }}>{selectedBed.patient.name}</div>
+                          <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>Linked Patient ID: {selectedBed.patientId}</div>
+                        </div>
+                        <button
+                          onClick={() => handleQuickRelease(selectedBed.id)}
+                          className="btn"
+                          style={{
+                            fontSize: '11px',
+                            padding: '4px 8px',
+                            backgroundColor: '#fee2e2',
+                            color: '#991b1b',
+                            borderColor: '#fee2e2'
+                          }}
+                        >
+                          Release Patient
+                        </button>
+                      </div>
+                    ) : (
+                      <select
+                        value={editPatientId}
+                        onChange={(e) => setEditPatientId(e.target.value)}
+                        style={{
+                          width: '100%',
+                          padding: '8px 12px',
+                          borderRadius: '8px',
+                          border: '1px solid #cbd5e1',
+                          fontSize: '13px',
+                          backgroundColor: 'white',
+                          color: 'var(--color-text-main)'
+                        }}
+                      >
+                        <option value="">-- Select Patient from waiting list --</option>
+                        {queue
+                          .filter(p => !beds.some(b => b.patientId === p.id) || p.id === selectedBed.patientId)
+                          .map((patient) => {
+                            const acuity = calculateAcuity(patient.vitals, patient.reason);
+                            return (
+                              <option key={patient.id} value={patient.id}>
+                                {patient.name} (Acuity: {acuity.classification} {acuity.score}/5 - {patient.reason})
+                              </option>
+                            );
+                          })}
+                      </select>
+                    )}
+                  </div>
+                )}
+
+                {selectedBed.wardType === 'ICU' && editStatus === 'OCCUPIED' && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fef2f2', padding: '12px', borderRadius: '8px', border: '1px solid #fecdd3' }}>
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: 600, color: '#991b1b' }}>Ventilator Life Support</div>
+                      <div style={{ fontSize: '11px', color: '#7f1d1d' }}>Toggle active auxiliary respiratory device</div>
+                    </div>
+                    <button
+                      onClick={() => setEditVentilator(!editVentilator)}
+                      style={{ background: 'transparent', border: 'none', cursor: 'pointer', padding: 0 }}
+                    >
+                      {editVentilator ? (
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '4px', color: '#ef4444', fontWeight: 700, fontSize: '13px' }}>
+                          ON <motion.div animate={{ scale: [1, 1.3, 1] }} transition={{ repeat: Infinity, duration: 1.5 }} style={{ width: '10px', height: '10px', backgroundColor: '#ef4444', borderRadius: '50%' }} />
+                        </div>
+                      ) : (
+                        <span style={{ color: '#64748b', fontSize: '13px', fontWeight: 700 }}>OFF</span>
+                      )}
+                    </button>
+                  </div>
+                )}
+
+                <div>
+                  <label style={{ display: 'block', fontSize: '12px', fontWeight: 600, color: 'var(--color-text-main)', marginBottom: '6px' }}>
+                    Bed Notes / Care Instructions
+                  </label>
+                  <textarea
+                    value={editNotes}
+                    onChange={(e) => setEditNotes(e.target.value)}
+                    placeholder="Enter special clinical notes, maintenance logs, or bed assignments details..."
+                    style={{
+                      width: '100%',
+                      height: '80px',
+                      padding: '8px 12px',
+                      borderRadius: '8px',
+                      border: '1px solid #cbd5e1',
+                      fontSize: '13px',
+                      fontFamily: 'inherit',
+                      resize: 'none',
+                      color: 'var(--color-text-main)'
+                    }}
+                  />
+                </div>
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '12px', borderTop: '1px solid #e2e8f0', paddingTop: '16px', marginTop: '8px' }}>
+                <button
+                  onClick={() => setSelectedBed(null)}
+                  className="btn btn-outline"
+                  style={{ fontSize: '13px', padding: '8px 16px' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleSaveBedConfig}
+                  disabled={isSavingBed || (editStatus === 'OCCUPIED' && !editPatientId && !selectedBed.patientId)}
+                  className="btn btn-primary"
+                  style={{
+                    fontSize: '13px',
+                    padding: '8px 16px',
+                    backgroundColor: 'var(--color-primary)',
+                    color: 'white',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '6px'
+                  }}
+                >
+                  {isSavingBed ? <RefreshCw size={14} className="animate-spin" /> : <Check size={14} />}
+                  Save Configurations
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
     </>
   );
 }
