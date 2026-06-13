@@ -1,6 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { createPortal } from 'react-dom';
 import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Clock, MessageCircle, FileText, Lock, ChevronRight, ShieldCheck, CheckCircle2, Navigation, HeartHandshake, BellRing, Sparkles, Loader2, Smartphone, RefreshCw, AlertTriangle } from 'lucide-react';
@@ -100,6 +101,11 @@ export default function PatientMode() {
 
   // Elite Preventative Care Mode State (Phase 17)
   const [isElitePreventative, setIsElitePreventative] = useState(false);
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   const fetchMyDischargeStatus = async () => {
     try {
@@ -654,7 +660,13 @@ If you would like a personalized clinical meal plan, you can book an appointment
   const cardPadding = isStressReduction ? 'var(--space-8)' : 'var(--space-6)';
 
   if (isElitePreventative) {
-    return <ElitePreventativeCare onClose={() => setIsElitePreventative(false)} />;
+    if (mounted) {
+      return createPortal(
+        <ElitePreventativeCare onClose={() => setIsElitePreventative(false)} />,
+        document.body
+      );
+    }
+    return null;
   }
 
   return (

@@ -333,7 +333,13 @@ export default function ElitePreventativeCare({ onClose }) {
 
   return (
     <div className="dashboard-root" style={{
-      minHeight: '100vh',
+      position: 'fixed',
+      top: 0,
+      left: 0,
+      width: '100vw',
+      height: '100vh',
+      zIndex: 9999,
+      overflowY: 'auto',
       backgroundColor: '#070a13',
       backgroundImage: 'radial-gradient(circle at top, #0f162e 0%, #05080f 100%)',
       color: '#f8fafc',
@@ -343,6 +349,16 @@ export default function ElitePreventativeCare({ onClose }) {
     }}>
       {/* Dynamic Embedded Styles for Slider and Visualizations */}
       <style dangerouslySetInnerHTML={{__html: `
+        /* Premium responsive card wrapper */
+        .premium-card {
+          background: rgba(22, 30, 49, 0.65);
+          backdrop-filter: blur(20px);
+          border: 1px solid rgba(255, 255, 255, 0.06);
+          border-radius: 24px;
+          padding: 32px;
+          box-shadow: 0 20px 40px rgba(0,0,0,0.4);
+        }
+
         /* Premium custom sliders */
         input[type=range].custom-slider {
           -webkit-appearance: none;
@@ -461,6 +477,10 @@ export default function ElitePreventativeCare({ onClose }) {
           .dashboard-root {
             padding: 12px !important;
           }
+          .premium-card {
+            padding: 16px !important;
+            border-radius: 16px !important;
+          }
           .navbar-header {
             flex-direction: column !important;
             align-items: stretch !important;
@@ -500,12 +520,22 @@ export default function ElitePreventativeCare({ onClose }) {
           .specs-container {
             grid-template-columns: 1fr !important;
             gap: 20px !important;
+            padding: 16px !important;
+            border-radius: 16px !important;
           }
           .specs-sidebar {
             border-right: none !important;
             border-bottom: 1px solid rgba(255, 255, 255, 0.06) !important;
             padding-right: 0 !important;
             padding-bottom: 16px !important;
+          }
+        }
+
+        @media (max-width: 480px) {
+          .product-line {
+            flex-direction: column !important;
+            align-items: flex-start !important;
+            gap: 12px !important;
           }
         }
       `}} />
@@ -668,16 +698,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: '32px' }}
               >
                 {/* Left Column: Digital Twin */}
-                <div style={{
-                  background: 'rgba(22, 30, 49, 0.65)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  borderRadius: '24px',
-                  padding: '32px',
+                <div className="premium-card" style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '24px',
-                  boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                  gap: '24px'
                 }}>
                   <div>
                     <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -830,16 +854,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 </div>
 
                 {/* Right Column: AI Chat */}
-                <div style={{
-                  background: 'rgba(22, 30, 49, 0.65)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  borderRadius: '24px',
-                  padding: '32px',
+                <div className="premium-card" style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '20px',
-                  boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                  gap: '20px'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                     <div>
@@ -988,16 +1006,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}
               >
                 {/* Climate Exposome Shield */}
-                <div style={{
-                  background: 'rgba(22, 30, 49, 0.65)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  borderRadius: '24px',
-                  padding: '32px',
+                <div className="premium-card" style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '24px',
-                  boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                  gap: '24px'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                     <div>
@@ -1035,7 +1047,7 @@ export default function ElitePreventativeCare({ onClose }) {
                   </div>
 
                   {/* Grid Metrics */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
+                  <div className="biomarker-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px' }}>
                     {[
                       { label: 'UV Radiation', val: exposome.uvIndex, status: exposome.uvIndex > 8 ? 'Extreme Risk' : 'Moderate', color: exposome.uvIndex > 8 ? '#f43f5e' : '#10b981' },
                       { label: 'Air Quality (AQI)', val: exposome.aqi, status: exposome.aqi > 150 ? 'Hazardous' : 'Excellent', color: exposome.aqi > 150 ? '#f43f5e' : '#10b981' },
@@ -1081,16 +1093,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 </div>
 
                 {/* Skincare Product Matcher */}
-                <div style={{
-                  background: 'rgba(22, 30, 49, 0.65)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  borderRadius: '24px',
-                  padding: '32px',
+                <div className="premium-card" style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '24px',
-                  boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                  gap: '24px'
                 }}>
                   <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                     <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1121,7 +1127,7 @@ export default function ElitePreventativeCare({ onClose }) {
                         color: '#06b6d4'
                       }
                     ].map((p, idx) => (
-                      <div key={idx} style={{
+                      <div key={idx} className="product-line" style={{
                         background: 'rgba(255,255,255,0.02)',
                         padding: '16px 20px',
                         borderRadius: '16px',
@@ -1169,16 +1175,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 <div className="responsive-grid" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '32px' }}>
                   
                   {/* Wearable Biometrics */}
-                  <div style={{
-                    background: 'rgba(22, 30, 49, 0.65)',
-                    backdropFilter: 'blur(20px)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    borderRadius: '24px',
-                    padding: '32px',
+                  <div className="premium-card" style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '20px',
-                    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                    gap: '20px'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                       <div>
@@ -1249,16 +1249,10 @@ export default function ElitePreventativeCare({ onClose }) {
                   </div>
 
                   {/* Voice Fatigue Auditor */}
-                  <div style={{
-                    background: 'rgba(22, 30, 49, 0.65)',
-                    backdropFilter: 'blur(20px)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    borderRadius: '24px',
-                    padding: '32px',
+                  <div className="premium-card" style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '16px',
-                    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                    gap: '16px'
                   }}>
                     <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                       <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1335,16 +1329,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 </div>
 
                 {/* Ingested Blood Panel */}
-                <div style={{
-                  background: 'rgba(22, 30, 49, 0.65)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  borderRadius: '24px',
-                  padding: '32px',
+                <div className="premium-card" style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '20px',
-                  boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                  gap: '20px'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                     <div>
@@ -1418,16 +1406,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '32px' }}>
                   
                   {/* Circadian Fasting & Diet */}
-                  <div style={{
-                    background: 'rgba(22, 30, 49, 0.65)',
-                    backdropFilter: 'blur(20px)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    borderRadius: '24px',
-                    padding: '32px',
+                  <div className="premium-card" style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '24px',
-                    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                    gap: '24px'
                   }}>
                     <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                       <div>
@@ -1501,16 +1483,10 @@ export default function ElitePreventativeCare({ onClose }) {
                   </div>
 
                   {/* Mobility Squat Scan */}
-                  <div style={{
-                    background: 'rgba(22, 30, 49, 0.65)',
-                    backdropFilter: 'blur(20px)',
-                    border: '1px solid rgba(255, 255, 255, 0.06)',
-                    borderRadius: '24px',
-                    padding: '32px',
+                  <div className="premium-card" style={{
                     display: 'flex',
                     flexDirection: 'column',
-                    gap: '16px',
-                    boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                    gap: '16px'
                   }}>
                     <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                       <h3 style={{ margin: 0, fontSize: '1.25rem', fontWeight: 800, color: '#f8fafc', display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -1582,16 +1558,10 @@ export default function ElitePreventativeCare({ onClose }) {
                 </div>
 
                 {/* Micronutrient Compounding Cabinet */}
-                <div style={{
-                  background: 'rgba(22, 30, 49, 0.65)',
-                  backdropFilter: 'blur(20px)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
-                  borderRadius: '24px',
-                  padding: '32px',
+                <div className="premium-card" style={{
                   display: 'flex',
                   flexDirection: 'column',
-                  gap: '24px',
-                  boxShadow: '0 20px 40px rgba(0,0,0,0.4)'
+                  gap: '24px'
                 }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', borderBottom: '1px solid rgba(255,255,255,0.06)', paddingBottom: '14px' }}>
                     <div>
