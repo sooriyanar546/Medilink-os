@@ -8,6 +8,7 @@ import { useHospitalStore } from '@/store/useHospitalStore';
 
 import { triggerNativeHaptic } from '@/lib/native';
 import { Send, X, Smartphone as BotIcon } from 'lucide-react';
+import ElitePreventativeCare from './ElitePreventativeCare';
 
 const mockPrescriptions = [
   { drugName: "Amlodipine 5mg", dosage: "1 Tablet", frequency: "QD", duration: "14 days", sig: "Once daily in the morning" },
@@ -93,6 +94,35 @@ export default function PatientMode() {
   const { data: session } = useSession();
   const { queue, messages, loadMessages, isLoadingMessages, showToast } = useHospitalStore();
   const patientId = session?.user?.patientId || session?.user?.id || 'pt_michael_chen';
+
+  // Patient Discharge HUD State (Phase 16)
+  const [myBedDischarge, setMyBedDischarge] = useState(null);
+
+  // Elite Preventative Care Mode State (Phase 17)
+  const [isElitePreventative, setIsElitePreventative] = useState(false);
+
+  const fetchMyDischargeStatus = async () => {
+    try {
+      const res = await fetch('/api/beds/discharge');
+      if (res.ok) {
+        const data = await res.json();
+        const trackerList = data.dischargeTracker || [];
+        const myTracker = trackerList.find(t => t.patientId === patientId);
+        setMyBedDischarge(myTracker || null);
+      }
+    } catch (e) {
+      console.error('Failed to fetch patient discharge status:', e);
+    }
+  };
+
+  useEffect(() => {
+    fetchMyDischargeStatus();
+  }, [patientId, queue]);
+
+  useEffect(() => {
+    const interval = setInterval(fetchMyDischargeStatus, 10000);
+    return () => clearInterval(interval);
+  }, [patientId]);
   
   // Consent & Gateway States (Phase 14)
   const [consents, setConsents] = useState([]);
@@ -623,6 +653,10 @@ If you would like a personalized clinical meal plan, you can book an appointment
   const headingSize = isStressReduction ? '2rem' : 'var(--font-size-2xl)';
   const cardPadding = isStressReduction ? 'var(--space-8)' : 'var(--space-6)';
 
+  if (isElitePreventative) {
+    return <ElitePreventativeCare onClose={() => setIsElitePreventative(false)} />;
+  }
+
   return (
     <div style={{ transition: 'all 0.3s ease', fontSize: baseFontSize }}>
       
@@ -637,14 +671,44 @@ If you would like a personalized clinical meal plan, you can book an appointment
           </p>}
         </div>
         
-        <button 
-          onClick={() => setIsStressReduction(!isStressReduction)}
-          className={`btn ${isStressReduction ? 'btn-primary' : 'btn-outline'}`}
-          style={{ borderRadius: '50px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: isStressReduction ? '#1e3a8a' : 'transparent' }}
-        >
-          <HeartHandshake size={18} />
-          {isStressReduction ? 'Stress Reduction On' : 'Simplify View'}
-        </button>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <button 
+            onClick={() => {
+              try {
+                const audio = new Audio('https://assets.mixkit.co/active_storage/sfx/2869/2869-120.wav');
+                audio.volume = 0.2;
+                audio.play().catch(e => {});
+              } catch (e) {}
+              try { triggerNativeHaptic('light'); } catch (err) {}
+              setIsElitePreventative(true);
+            }}
+            className="btn btn-outline"
+            style={{ 
+              borderRadius: '50px', 
+              padding: '8px 16px', 
+              display: 'flex', 
+              alignItems: 'center', 
+              gap: '8px', 
+              background: 'linear-gradient(135deg, rgba(16, 185, 129, 0.15), rgba(59, 130, 246, 0.15))',
+              borderColor: 'rgba(16, 185, 129, 0.4)',
+              color: '#10b981',
+              fontWeight: 700,
+              boxShadow: '0 0 10px rgba(16, 185, 129, 0.1)'
+            }}
+          >
+            <Sparkles size={18} />
+            Longevity Autopilot
+          </button>
+
+          <button 
+            onClick={() => setIsStressReduction(!isStressReduction)}
+            className={`btn ${isStressReduction ? 'btn-primary' : 'btn-outline'}`}
+            style={{ borderRadius: '50px', padding: '8px 16px', display: 'flex', alignItems: 'center', gap: '8px', backgroundColor: isStressReduction ? '#1e3a8a' : 'transparent' }}
+          >
+            <HeartHandshake size={18} />
+            {isStressReduction ? 'Stress Reduction On' : 'Simplify View'}
+          </button>
+        </div>
       </div>
 
       <div className="dashboard-grid" style={{ gridTemplateColumns: isStressReduction ? '1fr' : '3fr 2fr', gap: 'var(--space-8)' }}>
@@ -652,6 +716,206 @@ If you would like a personalized clinical meal plan, you can book an appointment
         {/* Left Column: Live Queue & Journey */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-6)' }}>
           
+          {/* Patient Inpatient Discharge HUD Card */}
+          {myBedDischarge && (
+            <div className="card" style={{
+              background: 'linear-gradient(135deg, rgba(255, 255, 255, 0.7), rgba(255, 255, 255, 0.45))',
+              backdropFilter: 'blur(12px)',
+              WebkitBackdropFilter: 'blur(12px)',
+              border: `1px solid ${myBedDischarge.readyForDischarge ? 'rgba(16, 185, 129, 0.4)' : 'rgba(59, 130, 246, 0.3)'}`,
+              boxShadow: '0 8px 32px 0 rgba(31, 38, 135, 0.08)',
+              borderRadius: 'var(--radius-lg)',
+              padding: 'var(--space-5)',
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 'var(--space-4)',
+              position: 'relative',
+              overflow: 'hidden'
+            }}>
+              {/* Background gradient glow */}
+              <div style={{
+                position: 'absolute',
+                top: '-50%',
+                right: '-50%',
+                width: '100%',
+                height: '100%',
+                background: myBedDischarge.readyForDischarge 
+                  ? 'radial-gradient(circle, rgba(16, 185, 129, 0.08) 0%, transparent 70%)'
+                  : 'radial-gradient(circle, rgba(59, 130, 246, 0.08) 0%, transparent 70%)',
+                zIndex: 0,
+                pointerEvents: 'none'
+              }}></div>
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', zIndex: 1 }}>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.15rem', fontWeight: 700, color: 'var(--color-text-main)', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <ShieldCheck size={20} color={myBedDischarge.readyForDischarge ? '#10b981' : '#2563eb'} />
+                    Coordinated Discharge Gateway
+                  </h3>
+                  <p style={{ margin: '4px 0 0 0', fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                    Bed: <strong style={{ color: 'var(--color-text-main)' }}>{myBedDischarge.bedName}</strong> ({myBedDischarge.wardType})
+                  </p>
+                </div>
+                <span className="badge" style={{
+                  backgroundColor: myBedDischarge.readyForDischarge ? '#dcfce7' : '#eff6ff',
+                  color: myBedDischarge.readyForDischarge ? '#15803d' : '#2563eb',
+                  fontWeight: 700,
+                  fontSize: '10px',
+                  borderRadius: '50px',
+                  padding: '4px 10px',
+                  border: myBedDischarge.readyForDischarge ? '1px solid rgba(16, 185, 129, 0.2)' : '1px solid rgba(37, 99, 235, 0.2)'
+                }}>
+                  {myBedDischarge.readyForDischarge ? 'READY FOR DISCHARGE' : 'DISCHARGE IN PROGRESS'}
+                </span>
+              </div>
+
+              {/* Progress Stepper Bar */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginTop: '12px', zIndex: 1, position: 'relative' }}>
+                {/* Horizontal Connector Line behind icons */}
+                <div style={{
+                  position: 'absolute',
+                  top: '18px',
+                  left: '10%',
+                  right: '10%',
+                  height: '2px',
+                  backgroundColor: '#e2e8f0',
+                  zIndex: -1
+                }} />
+                
+                {/* Steps */}
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '22%' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    backgroundColor: myBedDischarge.milestones.clinicalClearance ? '#10b981' : 'white',
+                    border: `2px solid ${myBedDischarge.milestones.clinicalClearance ? '#10b981' : '#cbd5e1'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                    transition: 'all 0.3s ease'
+                  }}>
+                    {myBedDischarge.milestones.clinicalClearance ? (
+                      <span style={{ color: 'white', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                    ) : (
+                      <span style={{ fontSize: '16px' }}>📝</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '8px', textAlign: 'center' }}>Physician</span>
+                  <span style={{ fontSize: '9px', color: myBedDischarge.milestones.clinicalClearance ? '#10b981' : '#f59e0b', fontWeight: 700, marginTop: '2px' }}>
+                    {myBedDischarge.milestones.clinicalClearance ? 'Cleared' : 'Reviewing'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '22%' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    backgroundColor: myBedDischarge.milestones.pharmacyClearance ? '#10b981' : 'white',
+                    border: `2px solid ${myBedDischarge.milestones.pharmacyClearance ? '#10b981' : '#cbd5e1'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                    transition: 'all 0.3s ease'
+                  }}>
+                    {myBedDischarge.milestones.pharmacyClearance ? (
+                      <span style={{ color: 'white', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                    ) : (
+                      <span style={{ fontSize: '16px' }}>💊</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '8px', textAlign: 'center' }}>Pharmacy</span>
+                  <span style={{ fontSize: '9px', color: myBedDischarge.milestones.pharmacyClearance ? '#10b981' : '#f59e0b', fontWeight: 700, marginTop: '2px' }}>
+                    {myBedDischarge.milestones.pharmacyClearance ? 'Dispensed' : 'Preparing'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '22%' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    backgroundColor: myBedDischarge.milestones.billingClearance ? '#10b981' : 'white',
+                    border: `2px solid ${myBedDischarge.milestones.billingClearance ? '#10b981' : '#cbd5e1'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                    transition: 'all 0.3s ease'
+                  }}>
+                    {myBedDischarge.milestones.billingClearance ? (
+                      <span style={{ color: 'white', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                    ) : (
+                      <span style={{ fontSize: '16px' }}>💳</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '8px', textAlign: 'center' }}>Billing</span>
+                  <span style={{ fontSize: '9px', color: myBedDischarge.milestones.billingClearance ? '#10b981' : '#f59e0b', fontWeight: 700, marginTop: '2px' }}>
+                    {myBedDischarge.milestones.billingClearance ? 'Paid' : 'Pending'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', width: '22%' }}>
+                  <div style={{
+                    width: '36px',
+                    height: '36px',
+                    borderRadius: '50%',
+                    backgroundColor: myBedDischarge.milestones.transporterClearance ? '#10b981' : 'white',
+                    border: `2px solid ${myBedDischarge.milestones.transporterClearance ? '#10b981' : '#cbd5e1'}`,
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
+                    transition: 'all 0.3s ease'
+                  }}>
+                    {myBedDischarge.milestones.transporterClearance ? (
+                      <span style={{ color: 'white', fontWeight: 'bold', fontSize: '14px' }}>✓</span>
+                    ) : (
+                      <span style={{ fontSize: '16px' }}>♿</span>
+                    )}
+                  </div>
+                  <span style={{ fontSize: '10px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '8px', textAlign: 'center' }}>Escort</span>
+                  <span style={{ fontSize: '9px', color: myBedDischarge.milestones.transporterClearance ? '#10b981' : '#f59e0b', fontWeight: 700, marginTop: '2px' }}>
+                    {myBedDischarge.milestones.transporterClearance ? 'Assigned' : 'Requested'}
+                  </span>
+                </div>
+              </div>
+
+              {/* Status Message */}
+              <div style={{
+                backgroundColor: myBedDischarge.readyForDischarge ? '#f0fdf4' : '#fef3c7',
+                border: `1px solid ${myBedDischarge.readyForDischarge ? '#bbf7d0' : '#fde68a'}`,
+                borderRadius: '8px',
+                padding: '12px',
+                fontSize: '0.85rem',
+                color: myBedDischarge.readyForDischarge ? '#166534' : '#92400e',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '10px',
+                marginTop: '8px',
+                zIndex: 1
+              }}>
+                <Sparkles size={18} color={myBedDischarge.readyForDischarge ? '#10b981' : '#d97706'} />
+                <div style={{ lineHeight: '1.4' }}>
+                  {myBedDischarge.readyForDischarge ? (
+                    <span><strong>All clearances completed!</strong> Please remain comfortable in your bed. An escort transporter is headed to your room with a wheelchair to assist you.</span>
+                  ) : (
+                    <span>
+                      <strong>Awaiting final approvals.</strong> Your care team is working on your discharge. 
+                      {!myBedDischarge.milestones.clinicalClearance && " The physician needs to sign the discharge order."}
+                      {myBedDischarge.milestones.clinicalClearance && !myBedDischarge.milestones.pharmacyClearance && " Your home medications are being packed by the pharmacy."}
+                      {myBedDischarge.milestones.clinicalClearance && myBedDischarge.milestones.pharmacyClearance && !myBedDischarge.milestones.billingClearance && " The cashier is reconciling your insurance claim and co-payment."}
+                      {myBedDischarge.milestones.clinicalClearance && myBedDischarge.milestones.pharmacyClearance && myBedDischarge.milestones.billingClearance && !myBedDischarge.milestones.transporterClearance && " We are assigning a physical escort transporter to assist you."}
+                    </span>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Pharmacy Alert */}
           <AnimatePresence>
             {pharmacyAlert && (

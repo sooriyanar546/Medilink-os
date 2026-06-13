@@ -31,6 +31,13 @@ export default function AdminMode() {
   const [editPatientId, setEditPatientId] = useState('');
   const [isSavingBed, setIsSavingBed] = useState(false);
 
+  // Patient Discharge & Bed-Turnaround States
+  const [dischargeData, setDischargeData] = useState([]);
+  const [maintenanceBeds, setMaintenanceBeds] = useState([]);
+  const [housekeepingMetrics, setHousekeepingMetrics] = useState({ avgTurnaroundMins: 0, activeCleaningCount: 0, completedTurnaroundCount: 0 });
+  const [isLoadingDischarge, setIsLoadingDischarge] = useState(true);
+  const [activeCleanerInput, setActiveCleanerInput] = useState({});
+
   const calculateAcuity = (vitals, reason = '') => {
     if (!vitals) return { score: 0, details: ['No vitals recorded'], classification: 'STABLE' };
     
@@ -306,6 +313,125 @@ export default function AdminMode() {
     }
   };
 
+  const fetchDischargeData = async () => {
+    try {
+      const res = await fetch('/api/beds/discharge');
+      if (!res.ok) throw new Error('Failed to fetch discharge data');
+      const data = await res.json();
+      setDischargeData(data.dischargeTracker || []);
+      setMaintenanceBeds(data.maintenanceBeds || []);
+      setHousekeepingMetrics(data.metrics || { avgTurnaroundMins: 0, activeCleaningCount: 0, completedTurnaroundCount: 0 });
+    } catch (err) {
+      console.error('Error fetching discharge metrics:', err);
+    } finally {
+      setIsLoadingDischarge(false);
+    }
+  };
+
+  const handleAssignTransporter = async (bedId) => {
+    const showToast = useHospitalStore.getState().showToast;
+    try {
+      const res = await fetch('/api/beds/discharge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'ASSIGN_TRANSPORTER', bedId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast('Transporter scheduled for patient escort!', 'success');
+        playChime();
+        try { await triggerNativeHaptic('success'); } catch (e) {}
+        fetchDischargeData();
+        fetchBeds();
+      } else {
+        showToast(`Failed to assign transporter: ${data.error}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error scheduling transporter', 'error');
+    }
+  };
+
+  const handleTriggerDischarge = async (bedId, patientName) => {
+    const showToast = useHospitalStore.getState().showToast;
+    try {
+      const res = await fetch('/api/beds/discharge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'TRIGGER_DISCHARGE', bedId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Patient ${patientName} successfully discharged! Bed has entered maintenance sanitization.`, 'success');
+        playChime();
+        try { await triggerNativeHaptic('success'); } catch (e) {}
+        fetchDischargeData();
+        fetchBeds();
+        useHospitalStore.getState().loadQueue();
+      } else {
+        showToast(`Discharge failed: ${data.error}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error triggering discharge', 'error');
+    }
+  };
+
+  const handleAssignCleaner = async (bedId) => {
+    const showToast = useHospitalStore.getState().showToast;
+    const cleaner = activeCleanerInput[bedId] || 'Crew Alpha';
+    try {
+      const res = await fetch('/api/beds/discharge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'ASSIGN_CLEANER', bedId, cleanerName: cleaner })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Cleaning task claimed by ${cleaner}!`, 'success');
+        playChime();
+        try { await triggerNativeHaptic('success'); } catch (e) {}
+        fetchDischargeData();
+        fetchBeds();
+      } else {
+        showToast(`Failed to assign cleaner: ${data.error}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error claiming cleaning task', 'error');
+    }
+  };
+
+  const handleCompleteCleaning = async (bedId, bedName) => {
+    const showToast = useHospitalStore.getState().showToast;
+    try {
+      const res = await fetch('/api/beds/discharge', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'COMPLETE_CLEANING', bedId })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Bed ${bedName} sanitization complete! Turnaround logged: ${data.turnaroundMins}m. Bed is now AVAILABLE.`, 'success');
+        playChime();
+        try { await triggerNativeHaptic('success'); } catch (e) {}
+        fetchDischargeData();
+        fetchBeds();
+      } else {
+        showToast(`Sanitization completion failed: ${data.error}`, 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error completing sanitization', 'error');
+    }
+  };
+
+  const getElapsedMins = (startStr) => {
+    if (!startStr) return 0;
+    const elapsedMs = new Date().getTime() - new Date(startStr).getTime();
+    return Math.max(1, Math.round(elapsedMs / 60000));
+  };
+
   const handleDispatchRemediation = (roomName) => {
     const showToast = useHospitalStore.getState().showToast;
     showToast(`Floor Manager support en route to ${roomName}! Staff notified via automated WhatsApp.`, "success");
@@ -369,6 +495,7 @@ export default function AdminMode() {
     fetchClaims();
     fetchAuditLogs();
     fetchBeds();
+    fetchDischargeData();
     const interval = setInterval(() => {
       fetchAuditLogs();
     }, 10000);
@@ -377,6 +504,7 @@ export default function AdminMode() {
 
   useEffect(() => {
     fetchBeds();
+    fetchDischargeData();
   }, [queue]);
 
   const waitingCount = queue.filter(v => v.status === 'WAITING').length;
@@ -765,6 +893,125 @@ export default function AdminMode() {
             )}
           </div>
 
+          {/* Housekeeping & Bed Turnaround Coordinator Panel */}
+          <div className="card" style={{ border: '1px solid rgba(245, 158, 11, 0.2)', backgroundColor: '#fffbf0' }}>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#b45309' }}>
+                <RefreshCw size={18} color="#b45309" />
+                Housekeeping & Bed Turnaround
+              </div>
+              <span className="badge" style={{ backgroundColor: '#fef3c7', color: '#b45309', fontSize: '10px' }}>
+                Avg Turnaround: {housekeepingMetrics.avgTurnaroundMins || 0}m
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {maintenanceBeds.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '16px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                  No beds currently require turnover cleaning.
+                </div>
+              ) : (
+                maintenanceBeds.map((bed) => {
+                  const elapsedMins = getElapsedMins(bed.maintenanceStart);
+                  const isClaimed = !!bed.cleanerName;
+
+                  return (
+                    <div
+                      key={bed.id}
+                      style={{
+                        backgroundColor: 'white',
+                        border: `1px solid ${isClaimed ? '#bbf7d0' : '#fef08a'}`,
+                        borderRadius: '10px',
+                        padding: '12px',
+                        boxShadow: 'var(--shadow-sm)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '8px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <strong style={{ fontSize: '13px', color: 'var(--color-text-main)' }}>{bed.name}</strong>
+                          <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', textTransform: 'uppercase', marginLeft: '6px' }}>({bed.wardType})</span>
+                        </div>
+                        <span
+                          className="badge"
+                          style={{
+                            backgroundColor: isClaimed ? '#dcfce7' : '#fef9c3',
+                            color: isClaimed ? '#15803d' : '#854d0e',
+                            fontSize: '9px',
+                            fontWeight: 700
+                          }}
+                        >
+                          {isClaimed ? 'Cleaning In Progress' : 'Awaiting Cleanup'}
+                        </span>
+                      </div>
+
+                      <div style={{ fontSize: '11px', color: 'var(--color-text-muted)' }}>
+                        <div>Elapsed turnaround: <strong>{elapsedMins} min</strong></div>
+                        <div style={{ fontSize: '10px', marginTop: '2px', fontStyle: 'italic' }}>Notes: {bed.notes || 'No instructions.'}</div>
+                      </div>
+
+                      {isClaimed ? (
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '4px', borderTop: '1px dashed #cbd5e1', paddingTop: '8px' }}>
+                          <span style={{ fontSize: '11px', color: 'var(--color-text-main)' }}>
+                            Staff: <strong>{bed.cleanerName}</strong>
+                          </span>
+                          <button
+                            onClick={() => handleCompleteCleaning(bed.id, bed.name)}
+                            className="btn btn-primary"
+                            style={{
+                              fontSize: '11px',
+                              padding: '5px 10px',
+                              backgroundColor: '#10b981',
+                              borderColor: '#10b981',
+                              color: 'white',
+                              borderRadius: '6px'
+                            }}
+                          >
+                            Complete Sanitization
+                          </button>
+                        </div>
+                      ) : (
+                        <div style={{ display: 'flex', gap: '8px', alignItems: 'center', marginTop: '4px', borderTop: '1px dashed #cbd5e1', paddingTop: '8px' }}>
+                          <input
+                            type="text"
+                            placeholder="Cleaner Name (e.g. Crew A)"
+                            value={activeCleanerInput[bed.id] || ''}
+                            onChange={(e) => setActiveCleanerInput({ ...activeCleanerInput, [bed.id]: e.target.value })}
+                            style={{
+                              flex: 1,
+                              padding: '5px 8px',
+                              fontSize: '11px',
+                              borderRadius: '6px',
+                              border: '1px solid #cbd5e1',
+                              backgroundColor: 'white',
+                              color: 'var(--color-text-main)'
+                            }}
+                          />
+                          <button
+                            onClick={() => handleAssignCleaner(bed.id)}
+                            className="btn"
+                            style={{
+                              fontSize: '11px',
+                              padding: '5px 10px',
+                              backgroundColor: 'var(--color-primary)',
+                              borderColor: 'var(--color-primary)',
+                              color: 'white',
+                              borderRadius: '6px'
+                            }}
+                          >
+                            Claim Task
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
           {/* Revenue Protection & Claim Intelligence */}
           <div className="card">
             <div className="card-header" style={{ marginBottom: 'var(--space-4)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -1014,6 +1261,141 @@ export default function AdminMode() {
                           }}
                         >
                           Auto-Dispatch
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+
+          {/* Discharge Coordinator Panel */}
+          <div className="card" style={{ border: '1px solid rgba(59, 130, 246, 0.2)', backgroundColor: '#f0f7ff' }}>
+            <div className="card-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 'var(--space-3)' }}>
+              <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1d4ed8' }}>
+                <Users size={18} color="#1d4ed8" />
+                Coordinated Discharge Control
+              </div>
+              <span className="badge" style={{ backgroundColor: '#dbeafe', color: '#1d4ed8', fontSize: '10px' }}>
+                Checkout Monitor
+              </span>
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+              {isLoadingDischarge ? (
+                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '16px' }}>
+                  Loading discharge lists...
+                </div>
+              ) : dischargeData.length === 0 ? (
+                <div style={{ textAlign: 'center', color: 'var(--color-text-muted)', fontSize: 'var(--font-size-sm)', padding: '16px', backgroundColor: 'white', borderRadius: '8px', border: '1px solid var(--border-light)' }}>
+                  No active patients checked into inpatient beds.
+                </div>
+              ) : (
+                dischargeData.map((data) => {
+                  const milestones = data.milestones;
+                  
+                  return (
+                    <div
+                      key={data.bedId}
+                      style={{
+                        backgroundColor: 'white',
+                        border: `1px solid ${data.readyForDischarge ? '#10b981' : 'rgba(59, 130, 246, 0.3)'}`,
+                        borderRadius: '10px',
+                        padding: '12px',
+                        boxShadow: 'var(--shadow-sm)',
+                        display: 'flex',
+                        flexDirection: 'column',
+                        gap: '10px'
+                      }}
+                    >
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                        <div>
+                          <span style={{ fontWeight: 700, fontSize: '13px', color: 'var(--color-text-main)' }}>
+                            {data.patientName}
+                          </span>
+                          <span style={{ fontSize: '10px', color: 'var(--color-text-muted)', marginLeft: '6px' }}>
+                            Bed: <strong>{data.bedName}</strong> ({data.wardType})
+                          </span>
+                        </div>
+                        <span
+                          className="badge"
+                          style={{
+                            backgroundColor: data.readyForDischarge ? '#dcfce7' : '#eff6ff',
+                            color: data.readyForDischarge ? '#15803d' : '#2563eb',
+                            fontSize: '9px',
+                            fontWeight: 700
+                          }}
+                        >
+                          {data.readyForDischarge ? 'READY FOR DISCHARGE' : 'AWAITING CLEARANCE'}
+                        </span>
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '6px', backgroundColor: '#f8fafc', padding: '8px', borderRadius: '8px' }}>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', opacity: milestones.clinicalClearance ? 1 : 0.4 }}>
+                          <span style={{ fontSize: '16px' }}>📝</span>
+                          <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '2px' }}>Clinical Note</span>
+                          <span style={{ fontSize: '10px', color: milestones.clinicalClearance ? '#10b981' : '#ef4444', fontWeight: 'bold', marginTop: '2px' }}>
+                            {milestones.clinicalClearance ? '✓ Done' : 'Pending'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', opacity: milestones.pharmacyClearance ? 1 : 0.4 }}>
+                          <span style={{ fontSize: '16px' }}>💊</span>
+                          <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '2px' }}>Pharmacy Rx</span>
+                          <span style={{ fontSize: '10px', color: milestones.pharmacyClearance ? '#10b981' : '#ef4444', fontWeight: 'bold', marginTop: '2px' }}>
+                            {milestones.pharmacyClearance ? '✓ Dispensed' : 'Pending'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', opacity: milestones.billingClearance ? 1 : 0.4 }}>
+                          <span style={{ fontSize: '16px' }}>💳</span>
+                          <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '2px' }}>Billing Claim</span>
+                          <span style={{ fontSize: '10px', color: milestones.billingClearance ? '#10b981' : '#ef4444', fontWeight: 'bold', marginTop: '2px' }}>
+                            {milestones.billingClearance ? '✓ Cleared' : 'Unpaid'}
+                          </span>
+                        </div>
+
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', textAlign: 'center', opacity: milestones.transporterClearance ? 1 : 0.4 }}>
+                          <span style={{ fontSize: '16px' }}>♿</span>
+                          <span style={{ fontSize: '9px', fontWeight: 600, color: 'var(--color-text-main)', marginTop: '2px' }}>Transporter</span>
+                          <span style={{ fontSize: '10px', color: milestones.transporterClearance ? '#10b981' : '#ef4444', fontWeight: 'bold', marginTop: '2px' }}>
+                            {milestones.transporterClearance ? '✓ Escort' : 'Needed'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '8px', marginTop: '2px' }}>
+                        {!milestones.transporterClearance && (
+                          <button
+                            onClick={() => handleAssignTransporter(data.bedId)}
+                            className="btn btn-outline"
+                            style={{
+                              fontSize: '11px',
+                              padding: '5px 10px',
+                              borderColor: 'var(--color-primary)',
+                              color: 'var(--color-primary)',
+                              borderRadius: '6px'
+                            }}
+                          >
+                            Assign Escort Transporter
+                          </button>
+                        )}
+                        <button
+                          onClick={() => handleTriggerDischarge(data.bedId, data.patientName)}
+                          disabled={!data.readyForDischarge}
+                          className="btn btn-primary"
+                          style={{
+                            fontSize: '11px',
+                            padding: '5px 12px',
+                            backgroundColor: data.readyForDischarge ? '#10b981' : '#cbd5e1',
+                            borderColor: data.readyForDischarge ? '#10b981' : '#cbd5e1',
+                            color: data.readyForDischarge ? 'white' : 'var(--color-text-muted)',
+                            cursor: data.readyForDischarge ? 'pointer' : 'not-allowed',
+                            borderRadius: '6px'
+                          }}
+                        >
+                          {data.readyForDischarge ? 'Discharge Patient' : 'Awaiting Clearances...'}
                         </button>
                       </div>
                     </div>
