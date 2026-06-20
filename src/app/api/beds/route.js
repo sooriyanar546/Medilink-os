@@ -3,8 +3,10 @@ import { auth } from '@/auth';
 import prisma from '@/lib/prisma';
 import { logAudit } from '@/lib/audit';
 import { pusherServer } from '@/lib/pusher';
+import { unstable_cache, revalidateTag } from 'next/cache';
 
 // GET: Retrieve all ward beds with associated patient information and their latest vital readings
+// Cached for 10 seconds — bed state changes infrequently; Pusher handles real-time UI updates.
 export async function GET(request) {
   try {
     const session = await auth();
@@ -12,20 +14,25 @@ export async function GET(request) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    const beds = await prisma.wardBed.findMany({
-      include: {
-        patient: {
-          include: {
-            visits: {
-              orderBy: { checkInAt: 'desc' },
-              take: 1
+    const getCachedBeds = unstable_cache(
+      async () => prisma.wardBed.findMany({
+        include: {
+          patient: {
+            include: {
+              visits: {
+                orderBy: { checkInAt: 'desc' },
+                take: 1
+              }
             }
           }
-        }
-      },
-      orderBy: { name: 'asc' }
-    });
+        },
+        orderBy: { name: 'asc' }
+      }),
+      ['ward-beds-all'],
+      { revalidate: 10, tags: ['ward-beds'] }
+    );
 
+    const beds = await getCachedBeds();
     return NextResponse.json(beds);
   } catch (error) {
     console.error('GET /api/beds error:', error);
@@ -154,6 +161,8 @@ export async function POST(request) {
         console.error('Pusher notification failed:', pusherError);
       }
 
+      // Bust bed cache on allocation
+      revalidateTag('ward-beds');
       return NextResponse.json({ success: true, bed: updatedBed });
     }
 
@@ -209,6 +218,8 @@ export async function POST(request) {
         console.error('Pusher notification failed:', pusherError);
       }
 
+      // Bust bed cache on release
+      revalidateTag('ward-beds');
       return NextResponse.json({ success: true, bed: updatedBed });
     }
   } catch (error) {

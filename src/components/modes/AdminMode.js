@@ -10,7 +10,15 @@ import { triggerNativeHaptic } from '@/lib/native';
 
 export default function AdminMode() {
   const { queue } = useHospitalQueue();
-  const { adminMetrics } = useOperationalMetrics();
+  const { adminMetrics, isLoadingMetrics } = useOperationalMetrics();
+
+  // Derived operational health indicators from live metrics
+  const systemRiskPct = adminMetrics.flaggedClaims > 3 ? 'HIGH' : adminMetrics.flaggedClaims > 1 ? 'MODERATE' : 'LOW';
+  const systemRiskValue = adminMetrics.flaggedClaims > 3 ? Math.min(85, adminMetrics.flaggedClaims * 15) : adminMetrics.flaggedClaims > 1 ? Math.min(45, adminMetrics.flaggedClaims * 12) : Math.max(4, adminMetrics.flaggedClaims * 8);
+  const riskColor = systemRiskPct === 'HIGH' ? '#ef4444' : systemRiskPct === 'MODERATE' ? '#f59e0b' : '#166534';
+  const riskBg = systemRiskPct === 'HIGH' ? '#fef2f2' : systemRiskPct === 'MODERATE' ? '#fffbeb' : '#f0fdf4';
+  const riskBorder = systemRiskPct === 'HIGH' ? '#fecaca' : systemRiskPct === 'MODERATE' ? '#fde68a' : '#bbf7d0';
+
   const [currentTime, setCurrentTime] = useState('');
   const [isSendingMessage, setIsSendingMessage] = useState(false);
   const [billingClaims, setBillingClaims] = useState([]);
@@ -453,29 +461,40 @@ export default function AdminMode() {
 
   const simulateClaim = async () => {
     setIsSimulatingClaim(true);
+    const showToast = useHospitalStore.getState().showToast;
     try {
-      const mockNote = {
-        subjective: "Patient complains of severe chest pain radiating to the left arm.",
-        objective: "BP 160/100. HR 115.",
-        assessment: "Suspected Myocardial Infarction.",
-        plan: "Admit to ICU immediately. Start aspirin and arrange for angiography."
-      };
+      // Step 1: Find a real completed visit that has a clinical note but no claim yet
+      const queueData = useHospitalStore.getState().queue;
+      const visitsRes = await fetch('/api/visits?status=COMPLETED');
+      const allVisits = visitsRes.ok ? await visitsRes.json() : [];
+
+      // Find a completed visit without an existing billing claim
+      const targetVisit = allVisits.find(v => v.status === 'COMPLETED') || allVisits[0];
+
+      if (!targetVisit) {
+        showToast('No completed visits found. Complete a patient consultation first to generate a billing claim.', 'error');
+        return;
+      }
+
       const res = await fetch('/api/billing-claims', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ 
-          visitId: `sim_visit_${Date.now()}`, 
-          clinicalNoteOverride: mockNote, 
-          amount: 8500, 
-          tpaName: 'National Health Insurance' 
+        body: JSON.stringify({
+          visitId: targetVisit.id,
+          amount: 8500,
+          tpaName: 'National Health Insurance'
         })
       });
       const data = await res.json();
       if (data.success) {
         setBillingClaims(prev => [data.billingClaim, ...prev]);
+        showToast(`AI-audited billing claim generated for visit ${targetVisit.id.slice(0, 8)}...`, 'success');
+      } else {
+        showToast(data.error || 'Failed to generate billing claim.', 'error');
       }
     } catch (e) {
       console.error(e);
+      showToast('Error generating billing claim.', 'error');
     } finally {
       setIsSimulatingClaim(false);
     }
@@ -551,16 +570,20 @@ export default function AdminMode() {
           </p>
         </div>
         
-        {/* Global System Health Indicator */}
-        <div style={{ backgroundColor: '#f0fdf4', border: '1px solid #bbf7d0', padding: '8px 16px', borderRadius: '50px', display: 'flex', alignItems: 'center', gap: '16px' }}>
+        {/* Global System Health Indicator — Live from /api/metrics */}
+        <div style={{ backgroundColor: riskBg, border: `1px solid ${riskBorder}`, padding: '8px 16px', borderRadius: '50px', display: 'flex', alignItems: 'center', gap: '16px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-            <Activity size={16} color="#166534" />
-            <span style={{ fontSize: 'var(--font-size-sm)', color: '#14532d', fontWeight: 600 }}>System Risk: LOW (12%)</span>
+            <Activity size={16} color={riskColor} />
+            <span style={{ fontSize: 'var(--font-size-sm)', color: riskColor, fontWeight: 600 }}>
+              System Risk: {systemRiskPct} ({systemRiskValue}%)
+            </span>
           </div>
-          <div style={{ width: '1px', height: '20px', backgroundColor: '#bbf7d0' }}></div>
+          <div style={{ width: '1px', height: '20px', backgroundColor: riskBorder }}></div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <HeartPulse size={16} color="#059669" />
-            <span style={{ fontSize: 'var(--font-size-sm)', color: '#065f46', fontWeight: 600 }}>Global Experience: 92/100</span>
+            <span style={{ fontSize: 'var(--font-size-sm)', color: '#065f46', fontWeight: 600 }}>
+              {isLoadingMetrics ? 'Loading...' : `Global Experience: ${adminMetrics.experienceScore ?? 100}/100`}
+            </span>
           </div>
         </div>
       </div>

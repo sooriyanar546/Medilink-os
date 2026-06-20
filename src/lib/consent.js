@@ -1,6 +1,14 @@
 import crypto from 'crypto';
 
-const SIGNING_SECRET = process.env.CONSENT_SIGNING_SECRET || process.env.AUTH_SECRET || 'fallback-consent-signing-secret-key-32-chars';
+// SECURITY: This secret signs all PatientConsent tokens (HMAC-SHA256).
+// A missing secret is a startup-fatal error — never fall back to a predictable string.
+const SIGNING_SECRET = process.env.CONSENT_SIGNING_SECRET || process.env.AUTH_SECRET;
+if (!SIGNING_SECRET) {
+  throw new Error(
+    'FATAL: CONSENT_SIGNING_SECRET (or AUTH_SECRET) environment variable is not set. ' +
+    'All patient consent token operations are disabled until this is configured.'
+  );
+}
 
 /**
  * Generates a cryptographically signed HMAC token representing patient consent.

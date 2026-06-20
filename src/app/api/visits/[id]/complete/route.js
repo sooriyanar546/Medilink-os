@@ -31,6 +31,24 @@ export async function PATCH(request, { params }) {
       return NextResponse.json({ error: access.error }, { status: access.status });
     }
 
+    // SEC-07: Log emergency override with a distinct action code for compliance audit trail.
+    // This ensures bypassed consent events are clearly identifiable and auditable separately
+    // from normal consultations — critical for HIPAA breach investigation.
+    if (emergencyBypass) {
+      await logAudit(
+        session?.user?.id || 'unknown',
+        session?.user?.name || 'Unknown Doctor',
+        'DOCTOR',
+        'EMERGENCY_CONSENT_OVERRIDE',
+        visit.patientId,
+        {
+          visitId: id,
+          reason: 'Doctor invoked emergency bypass — consent verification skipped',
+          timestamp: new Date().toISOString(),
+        }
+      ).catch(e => console.error('[Audit] Failed to log emergency override:', e));
+    }
+
     if (visit.status === 'COMPLETED') {
       return NextResponse.json({ error: 'Visit already completed' }, { status: 409 });
     }
@@ -124,9 +142,9 @@ export async function PATCH(request, { params }) {
           status: rejectionRisk > 30 ? 'FLAGGED' : 'PENDING'
         }
       });
-      console.log(`📡 [Revenue Shield] Automatically generated billing claim for visit ${id} (Risk: ${rejectionRisk}%)`);
     } catch (claimErr) {
-      console.error("❌ Failed to automatically generate billing claim inside complete route:", claimErr);
+      // Log server-side but never expose claim generation errors to client
+      console.error('[Billing] Failed to auto-generate billing claim for visit', id, claimErr?.message);
     }
 
     // 3. Find and promote the next WAITING patient to CONSULTING
@@ -156,23 +174,33 @@ export async function PATCH(request, { params }) {
       },
     });
 
-    // 5. Update the daily hospital metric
+    // 5. Update the daily hospital metric (date-based upsert, not cuid-based)
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const todayEnd = new Date(today);
+    todayEnd.setHours(23, 59, 59, 999);
 
-    await prisma.hospitalMetric.upsert({
-      where: { id: today.toISOString() }, // Use date as a stable ID
-      update: {
-        consultationCount: { increment: 1 },
-        revenueProtected: { increment: 1500 }, // Average revenue per visit
-      },
-      create: {
-        id: today.toISOString(),
-        date: today,
-        consultationCount: 1,
-        revenueProtected: 1500,
-      },
+    const todayMetric = await prisma.hospitalMetric.findFirst({
+      where: { date: { gte: today, lte: todayEnd } },
     });
+
+    if (todayMetric) {
+      await prisma.hospitalMetric.update({
+        where: { id: todayMetric.id },
+        data: {
+          consultationCount: { increment: 1 },
+          revenueProtected: { increment: 1500 },
+        },
+      });
+    } else {
+      await prisma.hospitalMetric.create({
+        data: {
+          date: today,
+          consultationCount: 1,
+          revenueProtected: 1500,
+        },
+      });
+    }
 
     // Write to Immutable Audit Trail
     await logAudit(
@@ -201,6 +229,6 @@ export async function PATCH(request, { params }) {
 
   } catch (error) {
     console.error('PATCH /api/visits/[id]/complete error:', error);
-    return NextResponse.json({ error: 'Failed to complete visit' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to complete visit. Please try again.' }, { status: 500 });
   }
 }

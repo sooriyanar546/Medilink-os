@@ -16,7 +16,7 @@ const patientHomeMeds = {
 const getDDIWarnings = (note) => {
   const patientId = note.visit.patientId;
   const homeMeds = patientHomeMeds[patientId] || patientHomeMeds['pt_michael_chen'];
-  const meds = note.medications || [];
+  const meds = Array.isArray(note.medications) ? note.medications : [];
   
   let list = [];
   const hasIbuprofen = meds.some(m => m.drugName.toLowerCase().includes("ibuprofen"));

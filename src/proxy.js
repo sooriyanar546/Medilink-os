@@ -1,12 +1,32 @@
 import NextAuth from 'next-auth';
 import { authConfig } from '@/auth.config';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit';
 
 export default NextAuth(authConfig).auth((req) => {
   const isLoggedIn = !!req.auth;
-  const role = req.auth?.user?.role?.toUpperCase(); // Extract role in uppercase
+  const role = req.auth?.user?.role?.toUpperCase();
+  const pathname = req.nextUrl.pathname;
 
-  const isAuthRoute = req.nextUrl.pathname.startsWith('/login');
-  const isApiAuthRoute = req.nextUrl.pathname.startsWith('/api/auth');
+  // Allow public static assets and service workers to bypass authentication
+  if (
+    pathname === '/manifest.json' ||
+    pathname === '/sw.js' ||
+    pathname.endsWith('.svg') ||
+    pathname.endsWith('.pdf') ||
+    pathname.endsWith('.ico')
+  ) {
+    return null;
+  }
+
+  const isAuthRoute = pathname.startsWith('/login');
+  const isApiAuthRoute = pathname.startsWith('/api/auth');
+
+  // Rate limit: brute-force protection on the sign-in endpoint
+  // 10 attempts per IP per minute before lockout
+  if (pathname === '/api/auth/signin' && req.method === 'POST') {
+    const rl = checkRateLimit(req, { limit: 10, windowMs: 60_000, prefix: 'signin' });
+    if (!rl.allowed) return rateLimitExceededResponse(rl.resetAt);
+  }
 
   // Allow next-auth API routes to pass through unhindered
   if (isApiAuthRoute) return null;
@@ -21,8 +41,6 @@ export default NextAuth(authConfig).auth((req) => {
 
   // Require authentication for all other routes
   if (!isLoggedIn) {
-    const pathname = req.nextUrl.pathname;
-    
     // For API routes, return a 401 Unauthorized JSON response instead of a redirect
     if (pathname.startsWith('/api')) {
       return new Response(
@@ -40,8 +58,6 @@ export default NextAuth(authConfig).auth((req) => {
   }
 
   // --- ROLE-BASED ACCESS CONTROL (RBAC) FOR API ROUTES ---
-  const pathname = req.nextUrl.pathname;
-
   if (pathname.startsWith('/api')) {
     // 1. Doctor-Only Endpoints
     if (
@@ -66,31 +82,31 @@ export default NextAuth(authConfig).auth((req) => {
       }
     }
 
-    // 3. Pharmacy-Only Endpoints
+    // 3. Pharmacy-Only Endpoints (Allow Patient, Pharmacist, Admin)
     if (pathname.startsWith('/api/pharmacy')) {
-      if (role !== 'PHARMACIST' && role !== 'ADMIN') {
+      if (role !== 'PHARMACIST' && role !== 'ADMIN' && role !== 'PATIENT') {
         return new Response(
-          JSON.stringify({ error: `Forbidden: Pharmacist credentials required (Your role: ${role})` }),
+          JSON.stringify({ error: `Forbidden: Pharmacist, Admin, or Patient credentials required (Your role: ${role})` }),
           { status: 403, headers: { 'Content-Type': 'application/json' } }
         );
       }
     }
 
-    // 4. Cashier-Only Endpoints
+    // 4. Cashier-Only Endpoints (Allow Cashier, Admin, or Patient)
     if (pathname.startsWith('/api/billing-claims')) {
-      if (role !== 'CASHIER' && role !== 'ADMIN') {
+      if (role !== 'CASHIER' && role !== 'ADMIN' && role !== 'PATIENT') {
         return new Response(
-          JSON.stringify({ error: `Forbidden: Cashier credentials required (Your role: ${role})` }),
+          JSON.stringify({ error: `Forbidden: Cashier, Admin, or Patient credentials required (Your role: ${role})` }),
           { status: 403, headers: { 'Content-Type': 'application/json' } }
         );
       }
     }
 
-    // 5. Admin-Only Endpoints
-    if (pathname.startsWith('/api/audit') || pathname.startsWith('/api/metrics')) {
-      if (role !== 'ADMIN') {
+    // 5. Audit logs - Admin or Patient Only
+    if (pathname.startsWith('/api/audit')) {
+      if (role !== 'ADMIN' && role !== 'PATIENT') {
         return new Response(
-          JSON.stringify({ error: `Forbidden: Administrative clearance required (Your role: ${role})` }),
+          JSON.stringify({ error: `Forbidden: Administrative or Patient clearance required (Your role: ${role})` }),
           { status: 403, headers: { 'Content-Type': 'application/json' } }
         );
       }

@@ -208,6 +208,6 @@ export async function POST(req) {
       });
     }
 
-    return NextResponse.json({ success: false, error: error.message }, { status: 500 });
+    return NextResponse.json({ success: false, error: 'Webhook processing failed.' }, { status: 500 });
   }
 }

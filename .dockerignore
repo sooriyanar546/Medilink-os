@@ -1,0 +1,68 @@
+# ============================================================
+# MediLink — Docker Ignore Rules
+# ============================================================
+# Excludes development-only files, secrets, and debug scripts
+# from the production Docker image build context.
+# ============================================================
+
+# --- Node Modules (handled by npm install inside container) ---
+node_modules/
+.npm
+
+# --- Next.js build artifacts ---
+.next/
+out/
+build/
+
+# --- Environment & Secrets (NEVER include in image) ---
+.env
+.env.*
+!.env.example
+
+# --- Development & Debug Scripts (not for production) ---
+check.js
+check_users.js
+simulate_patient.js
+seed.js
+get_schema.js
+
+# --- Prisma dev tooling ---
+prisma/seed.js
+
+# --- Test & QA artifacts ---
+/coverage
+/tests
+playwright-report/
+test-results/
+*.spec.js
+*.test.js
+
+# --- IDE & OS artifacts ---
+.DS_Store
+*.pem
+.vscode/
+.idea/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# --- Git & CI ---
+.git/
+.gitignore
+.github/
+
+# --- TypeScript generated ---
+*.tsbuildinfo
+next-env.d.ts
+/src/generated/prisma
+
+# --- Prisma artifacts not needed at runtime ---
+prisma/migrations/
+
+# --- Documentation ---
+README.md
+*.md
+
+# --- Vercel ---
+.vercel

@@ -10,18 +10,41 @@ services:
       - "3000:3000"
     environment:
       - NODE_ENV=production
+      # --- Database ---
       - DATABASE_URL=${DATABASE_URL}
-      - NEXTAUTH_SECRET=${NEXTAUTH_SECRET}
+      # --- Auth ---
+      - AUTH_SECRET=${AUTH_SECRET}
       - NEXTAUTH_URL=${NEXTAUTH_URL:-http://localhost:3000}
+      # --- Consent Signing ---
+      - CONSENT_SIGNING_SECRET=${CONSENT_SIGNING_SECRET}
+      # --- Pusher ---
       - PUSHER_APP_ID=${PUSHER_APP_ID}
       - PUSHER_KEY=${PUSHER_KEY}
       - PUSHER_SECRET=${PUSHER_SECRET}
       - PUSHER_CLUSTER=${PUSHER_CLUSTER}
       - NEXT_PUBLIC_PUSHER_KEY=${NEXT_PUBLIC_PUSHER_KEY}
       - NEXT_PUBLIC_PUSHER_CLUSTER=${NEXT_PUBLIC_PUSHER_CLUSTER}
+      # --- AI ---
+      - GROQ_API_KEY=${GROQ_API_KEY}
+      # --- Messaging (optional) ---
+      - TWILIO_ACCOUNT_SID=${TWILIO_ACCOUNT_SID:-}
+      - TWILIO_AUTH_TOKEN=${TWILIO_AUTH_TOKEN:-}
+      - TWILIO_WHATSAPP_FROM=${TWILIO_WHATSAPP_FROM:-}
     restart: always
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
     logging:
       driver: "json-file"
       options:
         max-size: "10m"
-        max-file: "3"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+        reservations:
+          memory: 256M

@@ -424,3 +424,55 @@ model WardBed {
   updatedAt           DateTime  @updatedAt
 }
 
+// ============================================================
+// STAFFING & SCHEDULING MODULE
+// ============================================================
+
+enum StaffRole {
+  NURSE
+  DOCTOR
+  PHARMACIST
+  WARD_AIDE
+  RECEPTIONIST
+  SECURITY
+  HOUSEKEEPING
+}
+
+enum ShiftStatus {
+  SCHEDULED
+  ON_DUTY
+  ON_BREAK
+  OFF_DUTY
+  ABSENT
+}
+
+model StaffMember {
+  id           String      @id @default(cuid())
+  name         String
+  role         StaffRole
+  department   String      // e.g. "ICU", "ER", "Pharmacy"
+  phone        String?
+  email        String?     @unique
+  employeeCode String      @unique
+  isActive     Boolean     @default(true)
+  shifts       StaffShift[]
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+}
+
+model StaffShift {
+  id          String      @id @default(cuid())
+  staffId     String
+  staff       StaffMember @relation(fields: [staffId], references: [id])
+  ward        String      // e.g. "ICU", "General", "ER"
+  shiftStart  DateTime
+  shiftEnd    DateTime
+  status      ShiftStatus @default(SCHEDULED)
+  notes       String?
+  createdAt   DateTime    @default(now())
+  updatedAt   DateTime    @updatedAt
+
+  @@index([staffId])
+  @@index([shiftStart])
+  @@index([ward])
+}

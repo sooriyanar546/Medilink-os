@@ -20,9 +20,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         password: { label: 'Password', type: 'password' },
       },
       async authorize(credentials) {
-        console.log("NextAuth Authorize Hook Called with Email:", credentials?.email);
         if (!credentials?.email || !credentials?.password) {
-          console.log("Missing credentials fields.");
           return null;
         }
 
@@ -30,20 +28,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
           where: { email: credentials.email }
         });
 
-        if (!user) {
-          console.log("User not found in DB with email:", credentials.email);
-          return null;
-        }
-        if (!user.password) {
-          console.log("User has no password field set.");
+        if (!user || !user.password) {
           return null;
         }
 
         const isPasswordValid = await bcrypt.compare(credentials.password, user.password);
-        console.log("Password comparison result:", isPasswordValid);
 
         if (!isPasswordValid) {
-          console.log("Password mismatch.");
           return null;
         }
 

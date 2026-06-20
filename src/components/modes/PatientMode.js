@@ -11,10 +11,8 @@ import { triggerNativeHaptic } from '@/lib/native';
 import { Send, X, Smartphone as BotIcon } from 'lucide-react';
 import ElitePreventativeCare from './ElitePreventativeCare';
 
-const mockPrescriptions = [
-  { drugName: "Amlodipine 5mg", dosage: "1 Tablet", frequency: "QD", duration: "14 days", sig: "Once daily in the morning" },
-  { drugName: "Paracetamol 500mg", dosage: "1 Tablet", frequency: "TID", duration: "3 days", sig: "Three times daily (Morning, Noon & Night) after meals" },
-];
+// mockPrescriptions removed — live data fetched from ClinicalNote.medications in useEffect below
+
 
 const translateSig = (sigCode) => {
   const code = sigCode.toUpperCase();
@@ -146,7 +144,7 @@ export default function PatientMode() {
       const res = await fetch(`/api/consent?patientId=${patientId}`);
       if (res.ok) {
         const data = await res.json();
-        setConsents(data);
+        setConsents(Array.isArray(data) ? data : []);
       }
     } catch (e) {
       console.error("Failed to load consents", e);
@@ -158,7 +156,7 @@ export default function PatientMode() {
       const res = await fetch('/api/audit');
       if (res.ok) {
         const data = await res.json();
-        const patientLogs = data.filter(log => log.patientId === patientId);
+        const patientLogs = Array.isArray(data) ? data.filter(log => log.patientId === patientId) : [];
         setConsentAuditLogs(patientLogs);
       }
     } catch (e) {
@@ -223,6 +221,32 @@ export default function PatientMode() {
   const [translatedReport, setTranslatedReport] = useState(null);
   const [isLoadingReport, setIsLoadingReport] = useState(true);
   const [pharmacyAlert, setPharmacyAlert] = useState(null);
+
+  // Live prescriptions from ClinicalNote.medications (replaces mockPrescriptions)
+  const [livePrescriptions, setLivePrescriptions] = useState([]);
+  const [isLoadingPrescriptions, setIsLoadingPrescriptions] = useState(true);
+
+  const fetchLivePrescriptions = async () => {
+    if (!patientId) return;
+    setIsLoadingPrescriptions(true);
+    try {
+      // Fetch the patient's signed clinical notes with medications via pharmacy route
+      const res = await fetch('/api/pharmacy');
+      if (res.ok) {
+        const notes = await res.json();
+        // Find the most recent signed note for this patient with medications
+        const myNote = Array.isArray(notes) ? notes.find(
+          n => n.visit?.patient?.id === patientId && Array.isArray(n.medications) && n.medications.length > 0
+        ) : null;
+        setLivePrescriptions(myNote?.medications || []);
+      }
+    } catch (e) {
+      console.error('Failed to fetch live prescriptions:', e);
+    } finally {
+      setIsLoadingPrescriptions(false);
+    }
+  };
+
 
   const [isSimulatingLab, setIsSimulatingLab] = useState(false);
   const [complianceLogs, setComplianceLogs] = useState({
@@ -411,9 +435,11 @@ If you would like a personalized clinical meal plan, you can book an appointment
 
   useEffect(() => {
     fetchReports();
+    fetchLivePrescriptions();
     loadConsents();
     loadConsentAuditLogs();
   }, [patientId]);
+
 
   const simulateLabPush = async () => {
     setIsSimulatingLab(true);
@@ -1088,22 +1114,34 @@ If you would like a personalized clinical meal plan, you can book an appointment
                 </p>
               )}
               
-              {/* Prescriptions List */}
+              {/* Live Prescriptions List — sourced from ClinicalNote.medications */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                {mockPrescriptions.map((med, idx) => (
-                  <div key={idx} style={{ padding: '10px 12px', backgroundColor: 'white', border: '1px solid #d1fae5', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                    <div>
-                      <div style={{ fontWeight: 600, fontSize: isStressReduction ? '1.1rem' : 'var(--font-size-sm)', color: '#166534' }}>{med.drugName}</div>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: '#065f46', marginTop: '2px' }}>
-                        Dosage: {med.dosage} • {med.duration} • <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{med.frequency}</span>
-                      </div>
-                      <div style={{ fontSize: 'var(--font-size-xs)', color: '#374151', fontStyle: 'italic', marginTop: '4px' }}>
-                        Instructions: {translateSig(med.frequency)}
+                {isLoadingPrescriptions ? (
+                  // Skeleton loader while fetching
+                  [1, 2].map(i => (
+                    <div key={i} style={{ padding: '10px 12px', backgroundColor: '#f0fdf4', border: '1px solid #d1fae5', borderRadius: '6px', height: '60px', animation: 'pulse 1.5s infinite' }} />
+                  ))
+                ) : livePrescriptions.length > 0 ? (
+                  livePrescriptions.map((med, idx) => (
+                    <div key={idx} style={{ padding: '10px 12px', backgroundColor: 'white', border: '1px solid #d1fae5', borderRadius: '6px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <div>
+                        <div style={{ fontWeight: 600, fontSize: isStressReduction ? '1.1rem' : 'var(--font-size-sm)', color: '#166534' }}>{med.drugName || med.name}</div>
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: '#065f46', marginTop: '2px' }}>
+                          Dosage: {med.dosage} • {med.duration} • <span style={{ textTransform: 'uppercase', fontWeight: 'bold' }}>{med.frequency}</span>
+                        </div>
+                        <div style={{ fontSize: 'var(--font-size-xs)', color: '#374151', fontStyle: 'italic', marginTop: '4px' }}>
+                          Instructions: {translateSig(med.frequency || '')}
+                        </div>
                       </div>
                     </div>
+                  ))
+                ) : (
+                  <div style={{ padding: '16px', textAlign: 'center', color: '#9ca3af', fontSize: 'var(--font-size-sm)', border: '1px dashed #d1fae5', borderRadius: '6px' }}>
+                    No active prescriptions found. Prescriptions will appear here after your doctor signs a clinical note.
                   </div>
-                ))}
+                )}
               </div>
+
 
               {/* Adherence check */}
               <div style={{ borderTop: '1px dashed #d1fae5', paddingTop: '12px' }}>

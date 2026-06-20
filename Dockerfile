@@ -5,9 +5,8 @@ FROM node:20-alpine AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
-# Copy package management descriptors
 COPY package.json package-lock.json ./
-RUN npm ci
+RUN npm ci --omit=dev
 
 # ==========================================
 # STAGE 2: Production Builder
@@ -15,20 +14,21 @@ RUN npm ci
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
+# Install ALL deps for build (including devDeps like prisma CLI)
+COPY package.json package-lock.json ./
+RUN npm ci
+
 COPY . .
 
-# Generate Prisma Client bindings for the schema
+# Generate Prisma Client bindings
 RUN npx prisma generate
 
-# Disable Next.js telemetry during compile time
+# Disable telemetry and build
 ENV NEXT_TELEMETRY_DISABLED=1
-
-# Compile production bundle
 RUN npm run build
 
 # ==========================================
-# STAGE 3: Production Runner
+# STAGE 3: Production Runner (Standalone)
 # ==========================================
 FROM node:20-alpine AS runner
 WORKDIR /app
@@ -36,18 +36,19 @@ WORKDIR /app
 ENV NODE_ENV=production
 ENV NEXT_TELEMETRY_DISABLED=1
 
-# Secure container by dropping root privileges to system nextjs user
+# Non-root user for security
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
-# Copy runtime assets and server bundles
-COPY --from=builder /app/public ./public
-COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/prisma ./prisma
+# Standalone build includes only required server files
+COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
+COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+COPY --from=builder --chown=nextjs:nodejs /app/public ./public
 
-# Automatically leverage output trace to reduce image size
-COPY --from=builder --chown=nextjs:nodejs /app/.next ./.next
-COPY --from=builder --chown=nextjs:nodejs /app/node_modules ./node_modules
+# Prisma schema + generated client needed at runtime for migrations/queries
+COPY --from=builder --chown=nextjs:nodejs /app/prisma ./prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/.prisma ./node_modules/.prisma
+COPY --from=builder --chown=nextjs:nodejs /app/node_modules/@prisma ./node_modules/@prisma
 
 USER nextjs
 
@@ -55,5 +56,5 @@ EXPOSE 3000
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-# Boot Next.js production server
-CMD ["npm", "start"]
+# Standalone server binary — no npm start overhead
+CMD ["node", "server.js"]

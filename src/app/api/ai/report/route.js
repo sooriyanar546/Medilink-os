@@ -1,5 +1,7 @@
 import { NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit';
+
 
 // Groq is FREE — sign up at console.groq.com, no credit card needed.
 const groq = process.env.GROQ_API_KEY ? new Groq({
@@ -25,6 +27,10 @@ Rules:
 
 export async function POST(request) {
   try {
+    // Rate limit: 10 AI report translations per IP per minute
+    const rl = checkRateLimit(request, { limit: 10, windowMs: 60_000, prefix: 'ai-report' });
+    if (!rl.allowed) return rateLimitExceededResponse(rl.resetAt);
+
     const { labData } = await request.json();
 
     if (!labData) {
@@ -61,6 +67,6 @@ export async function POST(request) {
       return NextResponse.json({ error: 'GROQ_API_KEY not configured. Get a free key at console.groq.com' }, { status: 503 });
     }
 
-    return NextResponse.json({ error: 'Failed to translate report' }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to translate lab report. Please retry.' }, { status: 500 });
   }
 }

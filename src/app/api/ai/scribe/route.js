@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import Groq from 'groq-sdk';
 import prisma from '@/lib/prisma';
+import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit';
 
 const groq = process.env.GROQ_API_KEY ? new Groq({
   apiKey: process.env.GROQ_API_KEY,
@@ -49,6 +50,10 @@ Do not include any markdown formatting, code blocks, or extra text. Just the raw
 
 export async function POST(request) {
   try {
+    // Rate limit: max 15 AI scribe calls per IP per minute to prevent Groq API abuse
+    const rl = checkRateLimit(request, { limit: 15, windowMs: 60_000, prefix: 'ai-scribe' });
+    if (!rl.allowed) return rateLimitExceededResponse(rl.resetAt);
+
     const { transcript, visitId, vitals } = await request.json();
 
     if (!transcript || !visitId) {
@@ -107,10 +112,11 @@ export async function POST(request) {
       return NextResponse.json({ error: 'AI returned malformed data. Please retry.' }, { status: 502 });
     }
     if (error?.status === 401) {
-      return NextResponse.json({ error: 'GROQ_API_KEY not configured. Get a free key at console.groq.com' }, { status: 503 });
+      return NextResponse.json({ error: 'AI scribe temporarily unavailable. Please retry or contact support.' }, { status: 503 });
     }
 
-    return NextResponse.json({ error: 'Failed to process transcript', details: error.message }, { status: 500 });
+    // Never expose raw error internals to the client in production
+    return NextResponse.json({ error: 'Failed to process transcript. Please retry.' }, { status: 500 });
   }
 }
 

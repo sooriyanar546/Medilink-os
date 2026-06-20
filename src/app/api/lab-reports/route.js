@@ -15,26 +15,15 @@ export async function POST(request) {
       return NextResponse.json({ error: 'patientId, testName, and rawData are required' }, { status: 400 });
     }
 
-    // Ensure the Patient exists in the database to satisfy the foreign key constraint
-    let resolvedPatientId = patientId;
-    let patient = await prisma.patient.findUnique({ where: { id: patientId } });
+    // Validate patient exists — reject if not found (no ghost-patient creation)
+    const patient = await prisma.patient.findUnique({ where: { id: patientId } });
     if (!patient) {
-      const firstPatient = await prisma.patient.findFirst();
-      if (firstPatient) {
-        resolvedPatientId = firstPatient.id;
-      } else {
-        const newPatient = await prisma.patient.create({
-          data: {
-            id: patientId,
-            name: 'Michael Chen',
-            dob: new Date('1980-01-01'),
-            phone: `+1234567890-${Date.now()}`,
-            email: 'patient@medilink.com',
-          }
-        });
-        resolvedPatientId = newPatient.id;
-      }
+      return NextResponse.json(
+        { error: 'Patient not found. Lab reports must be linked to an existing patient.' },
+        { status: 404 }
+      );
     }
+    const resolvedPatientId = patientId;
 
     let plainEnglish = null;
     let severity = 'NORMAL';
@@ -93,7 +82,7 @@ export async function POST(request) {
     return NextResponse.json({ success: true, labReport });
   } catch (error) {
     console.error('POST /api/lab-reports error:', error);
-    return NextResponse.json({ error: 'Failed to process lab report', details: error.message }, { status: 500 });
+    return NextResponse.json({ error: 'Failed to process lab report. Please try again.' }, { status: 500 });
   }
 }
 

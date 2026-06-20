@@ -25,7 +25,7 @@ const clinicalTemplates = [
 
 const getClinicalCodes = (note) => {
   const diag = (note?.note?.assessment || note?.assessment || "").toLowerCase();
-  const meds = note?.note?.medications || note?.medications || [];
+  const meds = Array.isArray(note?.note?.medications) ? note.note.medications : Array.isArray(note?.medications) ? note.medications : [];
 
   let icdCode = "ICD-10: R51.9 (Headache, Unspecified)";
   if (diag.includes("tension") || diag.includes("cephalgia")) {
@@ -99,11 +99,11 @@ export default function DoctorMode() {
       const res = await fetch(`/api/consent`);
       if (res.ok) {
         const data = await res.json();
-        const activeConsent = data.find(c => 
+        const activeConsent = Array.isArray(data) ? data.find(c => 
           c.patientId === patientId && 
           c.status === 'ACTIVE' && 
           new Date(c.expiresAt) > new Date()
-        );
+        ) : null;
         if (activeConsent) {
           setHasConsent(true);
           setConsentStatus('GRANTED');
@@ -190,7 +190,7 @@ export default function DoctorMode() {
 
   function auditClinicalCompliance(note, activeLabs = []) {
     const diag = (note?.note?.assessment || note?.assessment || "").toLowerCase();
-    const meds = note?.note?.medications || note?.medications || [];
+    const meds = Array.isArray(note?.note?.medications) ? note.note.medications : Array.isArray(note?.medications) ? note.medications : [];
     
     let list = [];
     let scoreVal = 100;
@@ -312,7 +312,7 @@ export default function DoctorMode() {
       setStructuredNote(prev => {
         const initial = { note: { medications: [] } };
         const current = prev || initial;
-        const meds = current.note?.medications || current.medications || [];
+        const meds = Array.isArray(current.note?.medications) ? current.note.medications : Array.isArray(current.medications) ? current.medications : [];
         const updatedMeds = [...meds, newMed];
         return {
           ...current,
@@ -342,7 +342,7 @@ export default function DoctorMode() {
       setStructuredNote(prev => {
         const initial = { note: { medications: [] } };
         const current = prev || initial;
-        const meds = current.note?.medications || current.medications || [];
+        const meds = Array.isArray(current.note?.medications) ? current.note.medications : Array.isArray(current.medications) ? current.medications : [];
         const updatedMeds = meds.map(m => {
           if (m.drugName.toLowerCase().includes("ibuprofen")) {
             return {
@@ -369,7 +369,7 @@ export default function DoctorMode() {
       setStructuredNote(prev => {
         const initial = { note: { medications: [] } };
         const current = prev || initial;
-        const meds = current.note?.medications || current.medications || [];
+        const meds = Array.isArray(current.note?.medications) ? current.note.medications : Array.isArray(current.medications) ? current.medications : [];
         // Filter out sumatriptan, replace with/ensure Ibuprofen is active
         const hasIbuprofen = meds.some(m => m.drugName.toLowerCase().includes("ibuprofen"));
         let updatedMeds = meds.filter(m => !m.drugName.toLowerCase().includes("sumatriptan"));
@@ -395,7 +395,7 @@ export default function DoctorMode() {
       setStructuredNote(prev => {
         const initial = { note: { medications: [] } };
         const current = prev || initial;
-        const meds = current.note?.medications || current.medications || [];
+        const meds = Array.isArray(current.note?.medications) ? current.note.medications : Array.isArray(current.medications) ? current.medications : [];
         let nsaidCount = 0;
         const updatedMeds = meds.filter(m => {
           const isNsaid = m.drugName.toLowerCase().includes("ibuprofen") || 
@@ -510,7 +510,7 @@ export default function DoctorMode() {
       
       setStructuredNote(prev => {
         const current = prev || initialNote;
-        const existingMeds = current.note?.medications || current.medications || [];
+        const existingMeds = Array.isArray(current.note?.medications) ? current.note.medications : Array.isArray(current.medications) ? current.medications : [];
         const updatedMeds = [...existingMeds, newMed];
         return {
           ...current,

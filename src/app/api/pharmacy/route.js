@@ -1,16 +1,36 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@/auth';
 import prisma from '@/lib/prisma';
 import { pusherServer } from '@/lib/pusher';
 import { logAudit } from '@/lib/audit';
 
 export async function GET() {
   try {
-    // Fetch all notes that have medications and are SIGNED
+    const session = await auth();
+    if (!session?.user) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+
+    const role = session.user.role?.toUpperCase();
+    const patientId = session.user.patientId;
+
+    let whereClause = {
+      status: 'SIGNED',
+      NOT: { medications: { equals: [] } }
+    };
+
+    if (role === 'PATIENT') {
+      if (!patientId) {
+        return NextResponse.json({ error: 'Patient ID missing from session' }, { status: 400 });
+      }
+      whereClause.visit = { patientId };
+    } else if (role !== 'PHARMACIST' && role !== 'ADMIN') {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    }
+
+    // Fetch notes that have medications, are SIGNED, and match the role's filter
     const notes = await prisma.clinicalNote.findMany({
-      where: {
-        status: 'SIGNED',
-        NOT: { medications: { equals: [] } } // Only if they actually have meds
-      },
+      where: whereClause,
       include: {
         visit: {
           include: {
