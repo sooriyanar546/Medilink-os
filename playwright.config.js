@@ -40,8 +40,9 @@ export default defineConfig({
   ],
 
   // Start the Next.js dev server automatically before tests
+  // Uses direct binary path to bypass PowerShell execution policy on Windows
   webServer: {
-    command: 'npm run dev',
+    command: 'cmd /c "node_modules\\.bin\\next dev --port 3000"',
     url: 'http://localhost:3000',
     reuseExistingServer: !process.env.CI,
     timeout: 120_000,

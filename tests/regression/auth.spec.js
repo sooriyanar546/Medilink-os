@@ -16,13 +16,27 @@ test.describe('Authentication & RBAC', () => {
     await expect(page).toHaveURL(/\/login/);
   });
 
-  test('R-02: Patient can log in with valid credentials', async ({ page }) => {
-    await page.goto('/login');
+  test('R-02: Patient can log in with valid credentials', async ({ page, isMobile }) => {
+    // Mobile viewport (iPhone 14) triggers a separate Next.js Turbopack compilation pass
+    // that can take 60-90s on first cold run. Wait for network idle after page load
+    // to ensure compilation finishes BEFORE we fill the form and submit.
+    test.setTimeout(isMobile ? 120_000 : 30_000);
+
+    // Wait for the page AND any Turbopack compilation to settle before interacting
+    await page.goto('/login', { waitUntil: 'networkidle' });
     await page.fill('#email', 'patient@medilink.com');
     await page.fill('#password', 'patient123');
-    await page.click('button[type="submit"]');
-    await page.waitForURL(/^(?!.*login)/);
-    await expect(page.locator('h1')).toBeVisible();
+
+    if (isMobile) {
+      await page.locator('button[type="submit"]').scrollIntoViewIfNeeded();
+    }
+
+    // Race the click and URL change together to avoid missed navigation events
+    await Promise.all([
+      page.waitForURL(/^(?!.*login)/, { timeout: 90_000 }),
+      page.click('button[type="submit"]'),
+    ]);
+    await expect(page.locator('h1')).toBeVisible({ timeout: 20_000 });
   });
 
   test('R-03: Invalid credentials shows error, does not redirect', async ({ page }) => {

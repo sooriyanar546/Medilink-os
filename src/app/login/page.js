@@ -232,6 +232,7 @@ export default function LoginPage() {
                 Email
               </label>
               <input
+                id="email"
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
@@ -254,6 +255,7 @@ export default function LoginPage() {
               </label>
               <div style={{ position: 'relative' }}>
                 <input
+                  id="password"
                   type={showPassword ? 'text' : 'password'}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}

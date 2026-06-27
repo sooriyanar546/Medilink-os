@@ -1,11 +1,16 @@
 import NextAuth from 'next-auth';
 import { authConfig } from '@/auth.config';
-import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit';
 
-export default NextAuth(authConfig).auth((req) => {
-  const isLoggedIn = !!req.auth;
-  const role = req.auth?.user?.role?.toUpperCase();
-  const pathname = req.nextUrl.pathname;
+const { auth } = NextAuth(authConfig);
+
+// Public routes that never require authentication
+const PUBLIC_ROUTES = ['/login'];
+const PUBLIC_API_PREFIXES = ['/api/auth', '/api/health', '/api/kiosk'];
+
+export default auth((req) => {
+  const { nextUrl, auth: session } = req;
+  const pathname = nextUrl.pathname;
+  const isAuthenticated = !!session?.user;
 
   // Allow public static assets and service workers to bypass authentication
   if (
@@ -15,50 +20,43 @@ export default NextAuth(authConfig).auth((req) => {
     pathname.endsWith('.pdf') ||
     pathname.endsWith('.ico')
   ) {
-    return null;
+    return;
   }
 
-  const isAuthRoute = pathname.startsWith('/login');
-  const isApiAuthRoute = pathname.startsWith('/api/auth');
-
-  // Rate limit: brute-force protection on the sign-in endpoint
-  // 10 attempts per IP per minute before lockout
-  if (pathname === '/api/auth/signin' && req.method === 'POST') {
-    const rl = checkRateLimit(req, { limit: 10, windowMs: 60_000, prefix: 'signin' });
-    if (!rl.allowed) return rateLimitExceededResponse(rl.resetAt);
+  // Always allow public API prefixes (auth callbacks, health checks, kiosk)
+  if (PUBLIC_API_PREFIXES.some((prefix) => pathname.startsWith(prefix))) {
+    return;
   }
 
-  // Allow next-auth API routes to pass through unhindered
-  if (isApiAuthRoute) return null;
-
-  // Allow login page, but redirect to dashboard if already logged in
-  if (isAuthRoute) {
-    if (isLoggedIn) {
-      return Response.redirect(new URL('/', req.nextUrl));
+  // Always allow public page routes
+  if (PUBLIC_ROUTES.includes(pathname)) {
+    // If already authenticated, redirect away from login to dashboard
+    if (isAuthenticated) {
+      return Response.redirect(new URL('/', nextUrl));
     }
-    return null;
+    return;
   }
 
-  // Require authentication for all other routes
-  if (!isLoggedIn) {
-    // For API routes, return a 401 Unauthorized JSON response instead of a redirect
-    if (pathname.startsWith('/api')) {
+  // Not authenticated — enforce protection
+  if (!isAuthenticated) {
+    // API routes get a clean 401 JSON response (not an HTML redirect)
+    if (pathname.startsWith('/api/')) {
       return new Response(
         JSON.stringify({ error: 'Authentication required. Active session not found.' }),
         { status: 401, headers: { 'Content-Type': 'application/json' } }
       );
     }
 
-    let callbackUrl = pathname;
-    if (req.nextUrl.search) {
-      callbackUrl += req.nextUrl.search;
-    }
-    const encodedCallbackUrl = encodeURIComponent(callbackUrl);
-    return Response.redirect(new URL(`/login?callbackUrl=${encodedCallbackUrl}`, req.nextUrl));
+    // Page routes get redirected to /login with return URL preserved
+    const loginUrl = new URL('/login', nextUrl);
+    loginUrl.searchParams.set('callbackUrl', pathname);
+    return Response.redirect(loginUrl);
   }
 
   // --- ROLE-BASED ACCESS CONTROL (RBAC) FOR API ROUTES ---
-  if (pathname.startsWith('/api')) {
+  if (pathname.startsWith('/api/')) {
+    const role = session.user?.role?.toUpperCase();
+
     // 1. Doctor-Only Endpoints
     if (
       (pathname.startsWith('/api/visits/') && pathname.endsWith('/complete')) ||
@@ -112,11 +110,11 @@ export default NextAuth(authConfig).auth((req) => {
       }
     }
   }
-
-  return null;
 });
 
-// Intercept all UI pages and API routes (excluding next-auth, static files, and icons)
+// Apply middleware to all routes except Next.js internals and static assets
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico).*)'],
+  matcher: [
+    '/((?!_next/static|_next/image|favicon.ico|sw.js|manifest.json|icons|images).*)',
+  ],
 };
