@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { ShieldAlert, Activity, TrendingDown, TrendingUp, Cpu, HeartPulse, BrainCircuit, Users, Navigation, Flame, Zap, CheckCircle2, FileText, AlertTriangle, RefreshCw, Bed, Check, X, Plus, Settings, Heart } from 'lucide-react';
+import { ShieldAlert, Activity, TrendingDown, TrendingUp, Cpu, HeartPulse, BrainCircuit, Users, Navigation, Flame, Zap, CheckCircle2, FileText, AlertTriangle, RefreshCw, Bed, Check, X, Plus, Settings, Heart, Calendar, Clock, UserCheck, UserX, Coffee, Stethoscope, Pill, Shield, ClipboardList, ChevronDown } from 'lucide-react';
 import { useHospitalQueue } from '@/hooks/useHospitalQueue';
 import { useOperationalMetrics } from '@/hooks/useOperationalMetrics';
 import { useHospitalStore } from '@/store/useHospitalStore';
@@ -11,6 +11,7 @@ import { triggerNativeHaptic } from '@/lib/native';
 export default function AdminMode() {
   const { queue } = useHospitalQueue();
   const { adminMetrics, isLoadingMetrics } = useOperationalMetrics();
+  const { showToast, completeConsultation } = useHospitalStore();
 
   // Derived operational health indicators from live metrics
   const systemRiskPct = adminMetrics.flaggedClaims > 3 ? 'HIGH' : adminMetrics.flaggedClaims > 1 ? 'MODERATE' : 'LOW';
@@ -27,6 +28,22 @@ export default function AdminMode() {
   const [auditLogs, setAuditLogs] = useState([]);
   const [selectedRoom, setSelectedRoom] = useState(null);
   const [remediatedRooms, setRemediatedRooms] = useState({});
+
+  // Staff Roster & Shift Scheduling State
+  const [staff, setStaff] = useState([]);
+  const [isLoadingStaff, setIsLoadingStaff] = useState(true);
+  const [staffWardFilter, setStaffWardFilter] = useState('ALL');
+  const [isUpdatingShift, setIsUpdatingShift] = useState(null); // shiftId being updated
+  const [showAddShiftForm, setShowAddShiftForm] = useState(false);
+  const [shiftForm, setShiftForm] = useState({
+    staffId: '',
+    ward: 'ICU',
+    shiftStart: '',
+    shiftEnd: '',
+    notes: ''
+  });
+  const [isSchedulingShift, setIsSchedulingShift] = useState(false);
+  const WARDS = ['ICU', 'ER', 'GENERAL', 'ISOLATION', 'PHARMACY', 'CASHIER'];
 
   // Ward Beds Management & Acuity Triage States
   const [beds, setBeds] = useState([]);
@@ -500,6 +517,72 @@ export default function AdminMode() {
     }
   };
 
+  const fetchStaff = async () => {
+    try {
+      const res = await fetch('/api/staff');
+      if (res.ok) {
+        const data = await res.json();
+        if (Array.isArray(data)) setStaff(data);
+      }
+    } catch (e) {
+      console.error('Error fetching staff:', e);
+    } finally {
+      setIsLoadingStaff(false);
+    }
+  };
+
+  const handleUpdateShiftStatus = async (shiftId, newStatus) => {
+    setIsUpdatingShift(shiftId);
+    try {
+      const res = await fetch('/api/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'UPDATE_SHIFT_STATUS', shiftId, status: newStatus })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Shift status updated to ${newStatus}`, 'success');
+        playChime();
+        fetchStaff();
+      } else {
+        showToast(data.error || 'Failed to update shift', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error updating shift status', 'error');
+    } finally {
+      setIsUpdatingShift(null);
+    }
+  };
+
+  const handleScheduleShift = async (e) => {
+    e.preventDefault();
+    if (!shiftForm.staffId || !shiftForm.shiftStart || !shiftForm.shiftEnd) return;
+    setIsSchedulingShift(true);
+    try {
+      const res = await fetch('/api/staff', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'SCHEDULE_SHIFT', ...shiftForm })
+      });
+      const data = await res.json();
+      if (data.success) {
+        showToast(`Shift scheduled for ${data.shift.staff.name}!`, 'success');
+        playChime();
+        setShowAddShiftForm(false);
+        setShiftForm({ staffId: '', ward: 'ICU', shiftStart: '', shiftEnd: '', notes: '' });
+        fetchStaff();
+      } else {
+        showToast(data.error || 'Failed to schedule shift', 'error');
+      }
+    } catch (e) {
+      console.error(e);
+      showToast('Error scheduling shift', 'error');
+    } finally {
+      setIsSchedulingShift(false);
+    }
+  };
+
   const fetchAuditLogs = async () => {
     try {
       const res = await fetch('/api/audit');
@@ -515,9 +598,11 @@ export default function AdminMode() {
     fetchAuditLogs();
     fetchBeds();
     fetchDischargeData();
+    fetchStaff();
     const interval = setInterval(() => {
       fetchAuditLogs();
-    }, 10000);
+      fetchStaff();
+    }, 15000);
     return () => clearInterval(interval);
   }, []);
 
@@ -1807,6 +1892,330 @@ export default function AdminMode() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* ================================================================
+          STAFF ROSTER & SHIFT SCHEDULING PANEL
+          ================================================================ */}
+      <div className="card" style={{ marginTop: 'var(--space-6)', padding: 0, overflow: 'hidden' }}>
+        {/* Header */}
+        <div style={{
+          padding: 'var(--space-4) var(--space-5)',
+          backgroundColor: 'var(--color-surface-hover)',
+          borderBottom: 'var(--border-light)',
+          display: 'flex',
+          justifyContent: 'space-between',
+          alignItems: 'center'
+        }}>
+          <div className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <Users size={18} color="var(--color-primary)" />
+            Live Staff Roster &amp; Shift Scheduler
+          </div>
+          <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+            {/* Ward Filter */}
+            <div style={{ display: 'flex', gap: '4px', flexWrap: 'wrap' }}>
+              {['ALL', ...WARDS].map(w => (
+                <button
+                  key={w}
+                  onClick={() => setStaffWardFilter(w)}
+                  style={{
+                    padding: '4px 10px',
+                    borderRadius: 'var(--radius-full)',
+                    fontSize: 'var(--font-size-xs)',
+                    fontWeight: 600,
+                    border: '1px solid',
+                    borderColor: staffWardFilter === w ? 'var(--color-primary)' : 'var(--color-border)',
+                    backgroundColor: staffWardFilter === w ? 'var(--color-primary-lighter)' : 'transparent',
+                    color: staffWardFilter === w ? 'var(--color-primary)' : 'var(--color-text-muted)',
+                    cursor: 'pointer',
+                    transition: 'all var(--transition-fast)'
+                  }}
+                >{w}</button>
+              ))}
+            </div>
+            <button
+              onClick={() => setShowAddShiftForm(prev => !prev)}
+              className="btn btn-primary"
+              style={{ fontSize: 'var(--font-size-xs)', padding: '6px 14px', display: 'flex', alignItems: 'center', gap: '6px' }}
+            >
+              <Plus size={14} />
+              Schedule Shift
+            </button>
+          </div>
+        </div>
+
+        {/* Schedule Shift Form */}
+        <AnimatePresence>
+          {showAddShiftForm && (
+            <motion.form
+              onSubmit={handleScheduleShift}
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              style={{
+                padding: 'var(--space-4) var(--space-5)',
+                backgroundColor: '#f0f9ff',
+                borderBottom: '1px solid #bae6fd',
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+                gap: '12px',
+                alignItems: 'end'
+              }}
+            >
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Staff Member</label>
+                <select
+                  required
+                  value={shiftForm.staffId}
+                  onChange={e => setShiftForm(p => ({ ...p, staffId: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: 'var(--font-size-sm)', fontFamily: 'var(--font-family)', color: 'var(--color-text-main)', backgroundColor: 'white' }}
+                >
+                  <option value="">Select staff...</option>
+                  {staff.map(s => (
+                    <option key={s.id} value={s.id}>{s.name} ({s.role})</option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Ward</label>
+                <select
+                  value={shiftForm.ward}
+                  onChange={e => setShiftForm(p => ({ ...p, ward: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: 'var(--font-size-sm)', fontFamily: 'var(--font-family)', color: 'var(--color-text-main)', backgroundColor: 'white' }}
+                >
+                  {WARDS.map(w => <option key={w} value={w}>{w}</option>)}
+                </select>
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Shift Start</label>
+                <input
+                  required type="datetime-local"
+                  value={shiftForm.shiftStart}
+                  onChange={e => setShiftForm(p => ({ ...p, shiftStart: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: 'var(--font-size-sm)', fontFamily: 'var(--font-family)', color: 'var(--color-text-main)', backgroundColor: 'white' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Shift End</label>
+                <input
+                  required type="datetime-local"
+                  value={shiftForm.shiftEnd}
+                  onChange={e => setShiftForm(p => ({ ...p, shiftEnd: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: 'var(--font-size-sm)', fontFamily: 'var(--font-family)', color: 'var(--color-text-main)', backgroundColor: 'white' }}
+                />
+              </div>
+              <div>
+                <label style={{ display: 'block', fontSize: 'var(--font-size-xs)', fontWeight: 600, color: 'var(--color-text-muted)', marginBottom: '4px', textTransform: 'uppercase', letterSpacing: '0.04em' }}>Notes (Optional)</label>
+                <input
+                  type="text" placeholder="e.g. Night cover, On-call..."
+                  value={shiftForm.notes}
+                  onChange={e => setShiftForm(p => ({ ...p, notes: e.target.value }))}
+                  style={{ width: '100%', padding: '8px 10px', borderRadius: 'var(--radius-md)', border: '1px solid var(--color-border)', fontSize: 'var(--font-size-sm)', fontFamily: 'var(--font-family)', color: 'var(--color-text-main)', backgroundColor: 'white' }}
+                />
+              </div>
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <button type="submit" disabled={isSchedulingShift} className="btn btn-primary" style={{ flex: 1, fontSize: 'var(--font-size-xs)', padding: '8px 12px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '6px' }}>
+                  {isSchedulingShift ? <RefreshCw size={13} style={{ animation: 'spin 1s linear infinite' }} /> : <Calendar size={13} />}
+                  {isSchedulingShift ? 'Scheduling...' : 'Confirm Shift'}
+                </button>
+                <button type="button" onClick={() => setShowAddShiftForm(false)} className="btn btn-outline" style={{ fontSize: 'var(--font-size-xs)', padding: '8px 12px' }}>
+                  Cancel
+                </button>
+              </div>
+            </motion.form>
+          )}
+        </AnimatePresence>
+
+        {/* Staff Table */}
+        <div style={{ padding: 'var(--space-4) var(--space-5)' }}>
+          {isLoadingStaff ? (
+            <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--color-text-muted)' }}>
+              <RefreshCw size={20} style={{ animation: 'spin 1s linear infinite', margin: '0 auto 8px', display: 'block' }} />
+              Loading staff roster...
+            </div>
+          ) : (() => {
+            const filtered = staffWardFilter === 'ALL'
+              ? staff
+              : staff.filter(s => s.shifts?.some(sh => sh.ward === staffWardFilter));
+
+            if (filtered.length === 0) {
+              return (
+                <div style={{ textAlign: 'center', padding: 'var(--space-8)', color: 'var(--color-text-muted)' }}>
+                  <UserCheck size={28} style={{ margin: '0 auto 8px', display: 'block', opacity: 0.3 }} />
+                  <div style={{ fontSize: 'var(--font-size-sm)' }}>No staff scheduled for today{staffWardFilter !== 'ALL' ? ` in ${staffWardFilter}` : ''}.</div>
+                  <div style={{ fontSize: 'var(--font-size-xs)', marginTop: '4px', color: 'var(--color-text-subtle)' }}>Use "Schedule Shift" to assign coverage for today.</div>
+                </div>
+              );
+            }
+
+            const roleIcon = (role) => {
+              const icons = { NURSE: '🩺', DOCTOR: '👨‍⚕️', PHARMACIST: '💊', WARD_AIDE: '🛏️', RECEPTIONIST: '📋', SECURITY: '🔒', HOUSEKEEPING: '🧹' };
+              return icons[role] || '👤';
+            };
+
+            const statusConfig = {
+              SCHEDULED:  { label: 'Scheduled',  color: '#0284c7', bg: '#e0f2fe', border: '#bae6fd' },
+              ON_DUTY:    { label: 'On Duty',     color: '#059669', bg: '#d1fae5', border: '#a7f3d0' },
+              ON_BREAK:   { label: 'On Break',    color: '#d97706', bg: '#fef3c7', border: '#fde68a' },
+              OFF_DUTY:   { label: 'Off Duty',    color: '#64748b', bg: '#f1f5f9', border: '#e2e8f0' },
+              ABSENT:     { label: 'Absent',      color: '#dc2626', bg: '#fee2e2', border: '#fecaca' },
+            };
+
+            return (
+              <div style={{ overflowX: 'auto' }}>
+                <table className="data-table" style={{ minWidth: '700px' }}>
+                  <thead>
+                    <tr>
+                      <th>Staff Member</th>
+                      <th>Role &amp; Dept.</th>
+                      <th>Ward</th>
+                      <th>Shift Window</th>
+                      <th>Status</th>
+                      <th style={{ textAlign: 'center' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <AnimatePresence>
+                      {filtered.map(member => {
+                        const todayShifts = member.shifts || [];
+                        if (todayShifts.length === 0) {
+                          return (
+                            <motion.tr key={member.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+                              <td>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                  <div style={{ width: '34px', height: '34px', borderRadius: 'var(--radius-md)', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
+                                    {roleIcon(member.role)}
+                                  </div>
+                                  <div>
+                                    <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-main)' }}>{member.name}</div>
+                                    <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-subtle)' }}>{member.employeeCode}</div>
+                                  </div>
+                                </div>
+                              </td>
+                              <td><div style={{ fontSize: 'var(--font-size-xs)' }}>{member.role}</div><div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{member.department}</div></td>
+                              <td colSpan={4} style={{ color: 'var(--color-text-subtle)', fontSize: 'var(--font-size-xs)', fontStyle: 'italic' }}>No shift scheduled today</td>
+                            </motion.tr>
+                          );
+                        }
+                        return todayShifts.map((shift, si) => {
+                          const cfg = statusConfig[shift.status] || statusConfig.SCHEDULED;
+                          const start = new Date(shift.shiftStart).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                          const end = new Date(shift.shiftEnd).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+                          const isUpdating = isUpdatingShift === shift.id;
+                          return (
+                            <motion.tr key={`${member.id}-${shift.id}`} initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }} transition={{ delay: si * 0.04 }}>
+                              {si === 0 && (
+                                <td rowSpan={todayShifts.length}>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                                    <div style={{ width: '34px', height: '34px', borderRadius: 'var(--radius-md)', backgroundColor: '#f1f5f9', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '16px', flexShrink: 0 }}>
+                                      {roleIcon(member.role)}
+                                    </div>
+                                    <div>
+                                      <div style={{ fontWeight: 600, fontSize: 'var(--font-size-sm)', color: 'var(--color-text-main)' }}>{member.name}</div>
+                                      <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-subtle)' }}>{member.employeeCode}</div>
+                                    </div>
+                                  </div>
+                                </td>
+                              )}
+                              {si === 0 && (
+                                <td rowSpan={todayShifts.length}>
+                                  <div style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600 }}>{member.role}</div>
+                                  <div style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{member.department}</div>
+                                </td>
+                              )}
+                              <td>
+                                <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 600, padding: '2px 8px', borderRadius: 'var(--radius-full)', backgroundColor: '#e0f2fe', color: '#0284c7', border: '1px solid #bae6fd' }}>
+                                  {shift.ward}
+                                </span>
+                              </td>
+                              <td>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-secondary)' }}>
+                                  <Clock size={12} color="var(--color-text-subtle)" />
+                                  {start} — {end}
+                                </div>
+                                {shift.notes && <div style={{ fontSize: '10px', color: 'var(--color-text-subtle)', marginTop: '2px' }}>{shift.notes}</div>}
+                              </td>
+                              <td>
+                                <span style={{
+                                  display: 'inline-flex', alignItems: 'center', gap: '4px',
+                                  padding: '3px 10px', borderRadius: 'var(--radius-full)',
+                                  fontSize: 'var(--font-size-xs)', fontWeight: 600,
+                                  backgroundColor: cfg.bg, color: cfg.color, border: `1px solid ${cfg.border}`
+                                }}>
+                                  {shift.status === 'ON_DUTY' && <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: cfg.color, display: 'inline-block', animation: 'breathe 2s ease-in-out infinite' }} />}
+                                  {cfg.label}
+                                </span>
+                              </td>
+                              <td style={{ textAlign: 'center' }}>
+                                <div style={{ display: 'flex', gap: '4px', justifyContent: 'center', flexWrap: 'wrap' }}>
+                                  {['ON_DUTY', 'ON_BREAK', 'OFF_DUTY'].filter(s => s !== shift.status).map(nextStatus => (
+                                    <button
+                                      key={nextStatus}
+                                      onClick={() => handleUpdateShiftStatus(shift.id, nextStatus)}
+                                      disabled={!!isUpdatingShift}
+                                      style={{
+                                        padding: '3px 8px',
+                                        borderRadius: 'var(--radius-sm)',
+                                        fontSize: '10px',
+                                        fontWeight: 600,
+                                        border: '1px solid',
+                                        cursor: isUpdatingShift ? 'not-allowed' : 'pointer',
+                                        opacity: isUpdatingShift ? 0.5 : 1,
+                                        backgroundColor: nextStatus === 'ON_DUTY' ? '#d1fae5' : nextStatus === 'ON_BREAK' ? '#fef3c7' : '#f1f5f9',
+                                        borderColor: nextStatus === 'ON_DUTY' ? '#a7f3d0' : nextStatus === 'ON_BREAK' ? '#fde68a' : '#e2e8f0',
+                                        color: nextStatus === 'ON_DUTY' ? '#059669' : nextStatus === 'ON_BREAK' ? '#d97706' : '#64748b',
+                                        transition: 'all var(--transition-fast)',
+                                        whiteSpace: 'nowrap'
+                                      }}
+                                    >
+                                      {isUpdating && isUpdatingShift === shift.id
+                                        ? '...'
+                                        : nextStatus === 'ON_DUTY' ? '✓ On Duty'
+                                        : nextStatus === 'ON_BREAK' ? '☕ Break'
+                                        : '⏹ Off Duty'}
+                                    </button>
+                                  ))}
+                                </div>
+                              </td>
+                            </motion.tr>
+                          );
+                        });
+                      })}
+                    </AnimatePresence>
+                  </tbody>
+                </table>
+              </div>
+            );
+          })()}
+        </div>
+
+        {/* Footer Summary */}
+        {staff.length > 0 && (
+          <div style={{
+            padding: 'var(--space-3) var(--space-5)',
+            borderTop: 'var(--border-light)',
+            backgroundColor: 'var(--color-surface-hover)',
+            display: 'flex',
+            gap: 'var(--space-6)',
+            flexWrap: 'wrap'
+          }}>
+            {[
+              { label: 'Total Rostered', value: staff.length, color: 'var(--color-primary)' },
+              { label: 'On Duty', value: staff.reduce((n, s) => n + (s.shifts?.filter(sh => sh.status === 'ON_DUTY').length || 0), 0), color: '#059669' },
+              { label: 'On Break', value: staff.reduce((n, s) => n + (s.shifts?.filter(sh => sh.status === 'ON_BREAK').length || 0), 0), color: '#d97706' },
+              { label: 'Scheduled', value: staff.reduce((n, s) => n + (s.shifts?.filter(sh => sh.status === 'SCHEDULED').length || 0), 0), color: '#0284c7' },
+              { label: 'Absent', value: staff.reduce((n, s) => n + (s.shifts?.filter(sh => sh.status === 'ABSENT').length || 0), 0), color: '#dc2626' },
+            ].map(stat => (
+              <div key={stat.label} style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                <span style={{ fontSize: 'var(--font-size-xs)', fontWeight: 700, color: stat.color }}>{stat.value}</span>
+                <span style={{ fontSize: 'var(--font-size-xs)', color: 'var(--color-text-muted)' }}>{stat.label}</span>
+              </div>
+            ))}
+            <div style={{ marginLeft: 'auto', fontSize: 'var(--font-size-xs)', color: 'var(--color-text-subtle)', display: 'flex', alignItems: 'center', gap: '4px' }}>
+              <RefreshCw size={11} /> Auto-refreshes every 15 seconds
+            </div>
+          </div>
+        )}
+      </div>
     </>
   );
 }

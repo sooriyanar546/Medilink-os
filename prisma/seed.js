@@ -47,8 +47,6 @@ async function main() {
   });
 
   // 3. Create Doctor
-  // Using an email-like ID for the demo doctor so we can upsert easily
-  // Wait, Doctor doesn't have an email or phone field in the schema. We'll find by ID.
   const doctor = await prisma.doctor.upsert({
     where: { id: 'doc_sarah_jenkins' },
     update: {},
@@ -153,7 +151,7 @@ async function main() {
 
   // 7. Seed the Visit Queue for Dr. Sarah Jenkins
   console.log('Seeding Visits for live queue...');
-  
+
   // Clear existing active visits for clean slate
   await prisma.billingClaim.deleteMany();
   await prisma.labReport.deleteMany();
@@ -166,7 +164,7 @@ async function main() {
 
   await prisma.visit.create({
     data: {
-      patientId: patient.id, // Michael Chen
+      patientId: patient.id,
       doctorId: doctor.id,
       status: 'CONSULTING',
       reason: 'Routine checkup and labs',
@@ -178,7 +176,7 @@ async function main() {
 
   await prisma.visit.create({
     data: {
-      patientId: patient2.id, // Emma Watson
+      patientId: patient2.id,
       doctorId: doctor.id,
       status: 'WAITING',
       reason: 'Chest pain',
@@ -190,7 +188,7 @@ async function main() {
 
   await prisma.visit.create({
     data: {
-      patientId: patient3.id, // James Rodriguez
+      patientId: patient3.id,
       doctorId: doctor.id,
       status: 'WAITING',
       reason: 'Follow-up on ECG',
@@ -202,34 +200,82 @@ async function main() {
   // 8. Seed Ward Beds
   console.log('Seeding Ward Beds...');
   await prisma.wardBed.deleteMany();
-  
+
   const bedsData = [
     // ICU
     { name: 'ICU-01', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
     { name: 'ICU-02', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
     { name: 'ICU-03', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
     { name: 'ICU-04', wardType: 'ICU', status: 'AVAILABLE', ventilator: false, notes: 'Ventilator standby' },
-    
     // ER
     { name: 'ER-01', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
     { name: 'ER-02', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
     { name: 'ER-03', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
     { name: 'ER-04', wardType: 'ER', status: 'AVAILABLE', ventilator: false, notes: 'Crash cart adjacent' },
-    
     // GENERAL
     { name: 'GEN-01', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Window view' },
     { name: 'GEN-02', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Near nurse station' },
     { name: 'GEN-03', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Near nurse station' },
     { name: 'GEN-04', wardType: 'GENERAL', status: 'AVAILABLE', ventilator: false, notes: 'Recuperative care' },
-    
     // ISOLATION
     { name: 'ISO-01', wardType: 'ISOLATION', status: 'AVAILABLE', ventilator: false, notes: 'Negative pressure room' },
     { name: 'ISO-02', wardType: 'ISOLATION', status: 'AVAILABLE', ventilator: false, notes: 'Negative pressure room' }
   ];
 
   for (const bed of bedsData) {
-    await prisma.wardBed.create({
-      data: bed
+    await prisma.wardBed.create({ data: bed });
+  }
+
+  // 9. Seed Staff Members & Today's Shifts
+  console.log('Seeding Staff Roster & Shifts...');
+  await prisma.staffShift.deleteMany();
+  await prisma.staffMember.deleteMany();
+
+  const today = new Date();
+  const todayAt = (h) => {
+    const d = new Date(today);
+    d.setHours(h, 0, 0, 0);
+    return d;
+  };
+
+  const staffRows = [
+    { name: 'Joy Mendoza', role: 'NURSE',        department: 'ICU',        phone: '+15550010011', email: 'joy.m@medilink.com',  employeeCode: 'EMP-N001' },
+    { name: 'Raj Sharma',  role: 'NURSE',        department: 'ER',         phone: '+15550010012', email: 'raj.s@medilink.com',  employeeCode: 'EMP-N002' },
+    { name: 'Dr. Lopez',   role: 'DOCTOR',       department: 'General',    phone: '+15550010013', email: 'lopez@medilink.com',  employeeCode: 'EMP-D001' },
+    { name: 'Priya K.',    role: 'PHARMACIST',   department: 'Pharmacy',   phone: '+15550010014', email: 'priya.k@medilink.com',employeeCode: 'EMP-P001' },
+    { name: 'Tom Carter',  role: 'WARD_AIDE',    department: 'General',    phone: '+15550010015', email: 'tom.c@medilink.com',  employeeCode: 'EMP-A001' },
+    { name: 'Lisa Hung',   role: 'RECEPTIONIST', department: 'OPD Front',  phone: '+15550010016', email: 'lisa.h@medilink.com', employeeCode: 'EMP-R001' },
+    { name: 'Ben Okeke',   role: 'SECURITY',     department: 'Facilities', phone: '+15550010017', email: 'ben.o@medilink.com',  employeeCode: 'EMP-S001' },
+    { name: 'Ana Torres',  role: 'NURSE',        department: 'Isolation',  phone: '+15550010018', email: 'ana.t@medilink.com',  employeeCode: 'EMP-N003' },
+  ];
+
+  const createdStaff = [];
+  for (const s of staffRows) {
+    const member = await prisma.staffMember.create({ data: s });
+    createdStaff.push(member);
+  }
+
+  const shiftDefs = [
+    { idx: 0, ward: 'ICU',       sH: 7,  eH: 19, status: 'ON_DUTY',   notes: 'Day shift'     },
+    { idx: 1, ward: 'ER',        sH: 7,  eH: 15, status: 'ON_BREAK',  notes: 'Morning cover'  },
+    { idx: 2, ward: 'GENERAL',   sH: 9,  eH: 17, status: 'SCHEDULED', notes: 'OPD rounds'    },
+    { idx: 3, ward: 'PHARMACY',  sH: 8,  eH: 20, status: 'ON_DUTY',   notes: 'Full day'      },
+    { idx: 4, ward: 'GENERAL',   sH: 6,  eH: 14, status: 'OFF_DUTY',  notes: 'A.M. porter'   },
+    { idx: 5, ward: 'GENERAL',   sH: 8,  eH: 16, status: 'ON_DUTY',   notes: 'Front desk'    },
+    { idx: 6, ward: 'ER',        sH: 20, eH: 32, status: 'SCHEDULED', notes: 'Night watch'   },
+    { idx: 7, ward: 'ISOLATION', sH: 7,  eH: 19, status: 'ON_DUTY',   notes: 'Isolation ward' },
+  ];
+
+  for (const sh of shiftDefs) {
+    await prisma.staffShift.create({
+      data: {
+        staffId:    createdStaff[sh.idx].id,
+        ward:       sh.ward,
+        shiftStart: todayAt(sh.sH),
+        shiftEnd:   todayAt(sh.eH),
+        status:     sh.status,
+        notes:      sh.notes,
+      }
     });
   }
 
