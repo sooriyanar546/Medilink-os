@@ -23,11 +23,15 @@ const avatarGradients = {
   admin: 'linear-gradient(135deg, #7c3aed, #a78bfa)',
 };
 
-export default function Topbar({ activeMode, setActiveMode, session, onSignOut, isMobileNavOpen, setIsMobileNavOpen }) {
+export default function Topbar({ activeMode, setActiveMode, allowedModes = [], session, onSignOut, isMobileNavOpen, setIsMobileNavOpen }) {
   const role = session?.user?.role || activeMode;
   const userName = session?.user?.name || 'Guest';
   const userDept = session?.user?.department || '';
   const userInitials = userName.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+
+  // Filter the global modes list to only include modes this user is allowed to access.
+  // This ensures Admin/Doctor tabs are NEVER rendered in a Patient's DOM.
+  const visibleModes = modes.filter((m) => allowedModes.includes(m.id));
 
   return (
     <header className="topbar">
@@ -66,7 +70,7 @@ export default function Topbar({ activeMode, setActiveMode, session, onSignOut, 
             boxShadow: 'var(--shadow-sm)',
           }}
         >
-          {modes.map(mode => (
+          {visibleModes.map(mode => (
             <option key={mode.id} value={mode.id} style={{ color: mode.color }}>
               {mode.label} Mode
             </option>
@@ -84,7 +88,7 @@ export default function Topbar({ activeMode, setActiveMode, session, onSignOut, 
         border: 'var(--border-light)',
         position: 'relative',
       }}>
-        {modes.map((mode) => {
+        {visibleModes.map((mode) => {
           const Icon = mode.icon;
           const isActive = activeMode === mode.id;
           return (

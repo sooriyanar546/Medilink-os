@@ -1,47 +1,60 @@
 import { NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
+import { withRoleGuard } from '@/lib/withRoleGuard';
+import { withRLSContext } from '@/lib/rlsContext';
+import { logAudit } from '@/lib/audit';
 import { unstable_cache, revalidateTag } from 'next/cache';
 
-
-// GET /api/visits — Fetch the live queue for a specific doctor (or all doctors)
-// Cached for 5 seconds per query key to reduce DB load on high-frequency polling.
-export async function GET(request) {
+// GET /api/visits — Fetch the live queue for a specific doctor (or all doctors).
+// Patients cannot view the queue. Doctors see only their own queue.
+// Admin/Nurse see all queues.
+export const GET = withRoleGuard(['ADMIN', 'NURSE', 'DOCTOR'], async (request, session) => {
   try {
     const { searchParams } = new URL(request.url);
-    const doctorId = searchParams.get('doctorId');
+    const userRole = (session.user.role || '').toUpperCase();
+
+    // Doctors can only see their own queue — prevent lateral movement
+    let doctorId = searchParams.get('doctorId');
+    if (userRole === 'DOCTOR') {
+      if (!session.user.doctorId) {
+        return NextResponse.json(
+          { error: 'Doctor profile not linked to this account.' },
+          { status: 400 }
+        );
+      }
+      doctorId = session.user.doctorId; // Override any client-supplied value
+    }
+
     const status = searchParams.get('status');
 
-    const getCachedVisits = unstable_cache(
-      async () => {
-        const whereClause = {
-          ...(doctorId && { doctorId }),
-          ...(status
-            ? { status }
-            : { status: { in: ['WAITING', 'CONSULTING'] } }),
-        };
-        return prisma.visit.findMany({
-          where: whereClause,
-          include: {
-            patient: { select: { id: true, name: true, phone: true, bloodGroup: true } },
-            doctor: { select: { id: true, name: true, specialization: true } },
-          },
-          orderBy: { queuePosition: 'asc' },
-        });
-      },
-      [`visits-${doctorId || 'all'}-${status || 'live'}`],
-      { revalidate: 5, tags: ['visits-queue'] }
-    );
+    const visits = await withRLSContext(session, (tx) => {
+      const whereClause = {
+        ...(doctorId && { doctorId }),
+        ...(status
+          ? { status }
+          : { status: { in: ['WAITING', 'CONSULTING'] } }),
+      };
+      return tx.visit.findMany({
+        where: whereClause,
+        include: {
+          patient: { select: { id: true, name: true, phone: true, bloodGroup: true } },
+          doctor: { select: { id: true, name: true, specialization: true } },
+        },
+        orderBy: { queuePosition: 'asc' },
+      });
+    });
 
-    const visits = await getCachedVisits();
     return NextResponse.json(visits);
   } catch (error) {
     console.error('GET /api/visits error:', error);
     return NextResponse.json({ error: 'Failed to fetch queue' }, { status: 500 });
   }
-}
+});
 
-// POST /api/visits — Check in a patient and add them to the live queue
-export async function POST(request) {
+// POST /api/visits — Check in a patient and add them to the live queue.
+// Only Nurse and Admin can create new visits (patient check-in).
+// Patients CANNOT self-inject into the queue.
+export const POST = withRoleGuard(['ADMIN', 'NURSE', 'DOCTOR'], async (request, session) => {
   try {
     const body = await request.json();
     const { patientId, doctorId, reason, isCritical } = body;
@@ -53,9 +66,8 @@ export async function POST(request) {
       );
     }
 
-    // Atomic transaction: find last position and create visit in one DB round-trip
-    // to prevent race conditions when two check-ins happen simultaneously.
-    const visit = await prisma.$transaction(async (tx) => {
+    // Atomic transaction: find last position and create visit in one DB round-trip.
+    const visit = await withRLSContext(session, async (tx) => {
       const lastInQueue = await tx.visit.findFirst({
         where: {
           doctorId,
@@ -83,13 +95,24 @@ export async function POST(request) {
       });
     });
 
+    await logAudit(
+      session.user.id,
+      session.user.name || 'Staff',
+      session.user.role?.toUpperCase(),
+      'PATIENT_CHECKED_IN',
+      patientId,
+      {
+        visitId: visit.id,
+        doctorId,
+        queuePosition: visit.queuePosition,
+        isCritical,
+      }
+    ).catch(console.error);
 
-    // Bust the visits-queue cache so next GET returns fresh data immediately
     revalidateTag('visits-queue');
-
     return NextResponse.json(visit, { status: 201 });
   } catch (error) {
     console.error('POST /api/visits error:', error);
     return NextResponse.json({ error: 'Failed to create visit' }, { status: 500 });
   }
-}
+});

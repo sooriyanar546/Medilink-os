@@ -103,6 +103,7 @@ model Patient {
   snoozedReminders SnoozedReminder[]
   consents        PatientConsent[]
   bed             WardBed?
+  vitalLogs       VitalLog[]
 }
 
 model Doctor {
@@ -475,4 +476,31 @@ model StaffShift {
   @@index([staffId])
   @@index([shiftStart])
   @@index([ward])
+}
+
+// ============================================================
+// PREVENTIVE CARE — VITAL LOGS (STANDALONE TIME-SERIES)
+// ============================================================
+
+model VitalLog {
+  id            String   @id @default(cuid())
+  patientId     String
+  recordedBy    String   // userId of recorder (patient self-log or nurse/doctor)
+  measuredAt    DateTime @default(now()) // Server-authoritative timestamp for audits
+  bp_systolic   Int?     // mmHg
+  bp_diastolic  Int?     // mmHg
+  heartRate     Int?     // bpm
+  glucose       Float?   // mg/dL
+  weight        Float?   // kg
+  spo2          Int?     // % oxygen saturation
+  temperature   Float?   // Celsius
+  notes         String?
+  source        String   @default("SELF") // SELF, NURSE, DEVICE
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  patient       Patient  @relation(fields: [patientId], references: [id])
+
+  @@index([patientId, measuredAt])
+  @@index([recordedBy])
 }

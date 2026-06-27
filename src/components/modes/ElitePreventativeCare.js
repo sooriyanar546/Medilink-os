@@ -1,6 +1,7 @@
 'use client';
 
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { useSession } from 'next-auth/react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Bot, Sparkles, Cpu, Sliders, Sun, CloudRain, Wind, Navigation, MapPin, 
@@ -8,7 +9,8 @@ import {
   Layers, User, Dna, Eye, FileText, FlaskConical, Database, Mic, Volume2, 
   Play, Square, Pill, Package, ShoppingCart, UserCheck, Video, RotateCcw, 
   Clock, Trophy, Percent, ChevronRight, CheckCircle2, AlertTriangle, Shield,
-  Terminal, BarChart2, Info, ChevronDown, Check, PlayCircle, ShieldAlert
+  Terminal, BarChart2, Info, ChevronDown, Check, PlayCircle, ShieldAlert,
+  PlusCircle, Save, Loader2, RefreshCw, Wifi, WifiOff
 } from 'lucide-react';
 import { triggerNativeHaptic } from '@/lib/native';
 import { useHospitalStore } from '@/store/useHospitalStore';
@@ -51,6 +53,141 @@ const playChime = (type = 'success') => {
 
 export default function ElitePreventativeCare({ onClose }) {
   const showToast = useHospitalStore(state => state.showToast);
+  const { data: session } = useSession();
+
+  // ─── Live Vitals Data Layer ────────────────────────────────────────────────
+  // Fetches the 30 most recent vital logs from /api/vitals on mount.
+  // Seeds biometrics state from the most recent record so the UI reflects
+  // real patient data instead of static defaults.
+  const [vitalHistory, setVitalHistory] = useState([]);         // Full log array from DB
+  const [isLoadingVitals, setIsLoadingVitals] = useState(false);
+  const [vitalsError, setVitalsError] = useState(null);
+  const [showVitalLogger, setShowVitalLogger] = useState(false); // Floating logger panel
+  const [isSavingVital, setIsSavingVital] = useState(false);
+  const [vitalSaveSuccess, setVitalSaveSuccess] = useState(false);
+
+  // Form fields for the vital logger panel
+  const [vitalForm, setVitalForm] = useState({
+    heartRate: '',
+    bp_systolic: '',
+    bp_diastolic: '',
+    spo2: '',
+    weight: '',
+    glucose: '',
+    temperature: '',
+    notes: '',
+  });
+
+  // Fetch vital history on mount
+  const fetchVitals = useCallback(async () => {
+    if (!session?.user) return;
+    setIsLoadingVitals(true);
+    setVitalsError(null);
+    try {
+      const res = await fetch('/api/vitals?limit=30');
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+      const json = await res.json();
+      const logs = json.data || [];
+      setVitalHistory(logs);
+
+      // Seed biometrics UI from the most recent log entry if available
+      if (logs.length > 0) {
+        const latest = logs[0];
+        setBiometrics(prev => ({
+          rhr:         latest.heartRate     ?? prev.rhr,
+          hrv:         prev.hrv,            // HRV not tracked in VitalLog — keep computed
+          sleep:       prev.sleep,
+          immuneScore: prev.immuneScore,
+        }));
+        // Update slider with latest weight-derived nutrition proxy if available
+        if (latest.weight) {
+          setSliders(prev => ({ ...prev, nutritionScore: Math.min(100, Math.round(latest.weight)) }));
+        }
+      }
+    } catch (err) {
+      console.error('[ElitePreventativeCare] fetchVitals error:', err);
+      setVitalsError(err.message);
+    } finally {
+      setIsLoadingVitals(false);
+    }
+  }, [session?.user]);
+
+  useEffect(() => {
+    fetchVitals();
+  }, [fetchVitals]);
+
+  // POST a new vital log to /api/vitals
+  const handleLogVitals = async (e) => {
+    e?.preventDefault();
+    if (isSavingVital) return;
+
+    // Validate at least one field filled
+    const hasValue = Object.entries(vitalForm)
+      .filter(([k]) => k !== 'notes')
+      .some(([, v]) => v !== '');
+    if (!hasValue) {
+      showToast('Please enter at least one vital measurement.', 'error');
+      return;
+    }
+
+    setIsSavingVital(true);
+    setVitalSaveSuccess(false);
+    try {
+      const payload = {
+        ...(vitalForm.heartRate    && { heartRate:    parseInt(vitalForm.heartRate) }),
+        ...(vitalForm.bp_systolic  && { bp_systolic:  parseInt(vitalForm.bp_systolic) }),
+        ...(vitalForm.bp_diastolic && { bp_diastolic: parseInt(vitalForm.bp_diastolic) }),
+        ...(vitalForm.spo2         && { spo2:         parseInt(vitalForm.spo2) }),
+        ...(vitalForm.weight       && { weight:       parseFloat(vitalForm.weight) }),
+        ...(vitalForm.glucose      && { glucose:      parseFloat(vitalForm.glucose) }),
+        ...(vitalForm.temperature  && { temperature:  parseFloat(vitalForm.temperature) }),
+        ...(vitalForm.notes        && { notes:        vitalForm.notes }),
+      };
+
+      const res = await fetch('/api/vitals', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const saved = await res.json();
+
+      // Optimistic UI: prepend to local history without re-fetch
+      setVitalHistory(prev => [saved, ...prev]);
+
+      // Update biometric synthesizer UI with new readings (server-authoritative timestamp)
+      if (saved.heartRate) {
+        setBiometrics(prev => ({ ...prev, rhr: saved.heartRate }));
+      }
+
+      // Award longevity points for consistent tracking
+      setLongevityPoints(prev => prev + 50);
+
+      // Reset form and show success
+      setVitalForm({ heartRate: '', bp_systolic: '', bp_diastolic: '', spo2: '', weight: '', glucose: '', temperature: '', notes: '' });
+      setVitalSaveSuccess(true);
+      setTimeout(() => { setVitalSaveSuccess(false); setShowVitalLogger(false); }, 2000);
+
+      playChime('success');
+      try { triggerNativeHaptic('success'); } catch (_) {}
+      showToast('✅ Vitals saved to your health record.', 'success');
+    } catch (err) {
+      console.error('[ElitePreventativeCare] handleLogVitals error:', err);
+      showToast(`Failed to save vitals: ${err.message}`, 'error');
+    } finally {
+      setIsSavingVital(false);
+    }
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
 
   // Main Navigation tabs: dashboard | specs
   const [activeTab, setActiveTab] = useState('dashboard');
@@ -616,24 +753,230 @@ export default function ElitePreventativeCare({ onClose }) {
           </button>
         </div>
 
-        {/* Exit button */}
-        <button 
-          onClick={() => { playChime('alert'); onClose(); }}
-          style={{
-            padding: '10px 20px',
-            borderRadius: '99px',
-            fontSize: '13px',
-            fontWeight: 700,
-            backgroundColor: 'rgba(239, 68, 68, 0.08)',
-            color: '#f87171',
-            border: '1px solid rgba(239, 68, 68, 0.2)',
-            cursor: 'pointer',
-            transition: 'all 0.2s'
-          }}
-        >
-          Exit Dashboard
-        </button>
+        {/* Log Vitals CTA */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+          {/* Live sync status indicator */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: 6,
+            padding: '6px 12px', borderRadius: '99px',
+            background: vitalsError
+              ? 'rgba(239,68,68,0.08)'
+              : isLoadingVitals
+                ? 'rgba(255,255,255,0.04)'
+                : 'rgba(16,185,129,0.08)',
+            border: `1px solid ${vitalsError ? 'rgba(239,68,68,0.2)' : isLoadingVitals ? 'rgba(255,255,255,0.1)' : 'rgba(16,185,129,0.2)'}`,
+            fontSize: 11, fontWeight: 600,
+            color: vitalsError ? '#f87171' : isLoadingVitals ? '#94a3b8' : '#10b981',
+          }}>
+            {isLoadingVitals
+              ? <><Loader2 size={11} style={{ animation: 'spin 1s linear infinite' }} /> Syncing...</>
+              : vitalsError
+                ? <><WifiOff size={11} /> Offline</>
+                : <><Wifi size={11} /> {vitalHistory.length} logs synced</>
+            }
+          </div>
+
+          <motion.button
+            onClick={() => { setShowVitalLogger(true); playChime('click'); }}
+            whileHover={{ scale: 1.03 }}
+            whileTap={{ scale: 0.97 }}
+            style={{
+              padding: '10px 18px', borderRadius: '99px', fontSize: '13px', fontWeight: 700,
+              background: 'linear-gradient(135deg, #10b981, #06b6d4)',
+              color: 'white', border: 'none', cursor: 'pointer',
+              display: 'flex', alignItems: 'center', gap: 6,
+              boxShadow: '0 4px 16px rgba(16,185,129,0.3)',
+            }}
+          >
+            <PlusCircle size={14} /> Log Vitals
+          </motion.button>
+
+          <button
+            onClick={() => { playChime('alert'); onClose(); }}
+            style={{
+              padding: '10px 20px', borderRadius: '99px', fontSize: '13px', fontWeight: 700,
+              backgroundColor: 'rgba(239, 68, 68, 0.08)', color: '#f87171',
+              border: '1px solid rgba(239, 68, 68, 0.2)', cursor: 'pointer', transition: 'all 0.2s'
+            }}
+          >
+            Exit Dashboard
+          </button>
+        </div>
       </div>
+
+      {/* ─── LIVE VITALS LOGGER MODAL ──────────────────────────────────────── */}
+      <AnimatePresence>
+        {showVitalLogger && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            style={{
+              position: 'fixed', inset: 0, zIndex: 99999,
+              background: 'rgba(0,0,0,0.7)', backdropFilter: 'blur(16px)',
+              display: 'flex', alignItems: 'center', justifyContent: 'center',
+              padding: '24px',
+            }}
+            onClick={(e) => { if (e.target === e.currentTarget) setShowVitalLogger(false); }}
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.94, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.94, y: 20 }}
+              transition={{ type: 'spring', stiffness: 400, damping: 30 }}
+              style={{
+                width: '100%', maxWidth: 520,
+                background: 'linear-gradient(145deg, #0f1628, #131e36)',
+                border: '1px solid rgba(16,185,129,0.2)',
+                borderRadius: 24, padding: 32,
+                boxShadow: '0 32px 80px rgba(0,0,0,0.6), 0 0 60px rgba(16,185,129,0.06)',
+              }}
+            >
+              {/* Modal Header */}
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 24 }}>
+                <div style={{
+                  width: 40, height: 40, borderRadius: 12,
+                  background: 'linear-gradient(135deg, #10b981, #06b6d4)',
+                  display: 'flex', alignItems: 'center', justifyContent: 'center',
+                  boxShadow: '0 0 20px rgba(16,185,129,0.3)',
+                }}>
+                  <Activity size={20} color="white" />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.125rem', fontWeight: 800, color: '#f8fafc', letterSpacing: '-0.02em' }}>
+                    Log Today's Vitals
+                  </h3>
+                  <p style={{ margin: 0, fontSize: '0.75rem', color: '#64748b' }}>
+                    Saved to your secure health record with server timestamp
+                  </p>
+                </div>
+                <button onClick={() => setShowVitalLogger(false)} style={{
+                  marginLeft: 'auto', background: 'none', border: 'none',
+                  color: '#64748b', cursor: 'pointer', fontSize: 20, lineHeight: 1,
+                }}>×</button>
+              </div>
+
+              {vitalSaveSuccess ? (
+                <motion.div
+                  initial={{ opacity: 0, scale: 0.9 }}
+                  animate={{ opacity: 1, scale: 1 }}
+                  style={{ textAlign: 'center', padding: '24px 0' }}
+                >
+                  <motion.div
+                    initial={{ scale: 0 }}
+                    animate={{ scale: 1 }}
+                    transition={{ type: 'spring', stiffness: 300, damping: 20 }}
+                  >
+                    <CheckCircle2 size={48} color="#10b981" style={{ margin: '0 auto 12px' }} />
+                  </motion.div>
+                  <p style={{ color: '#10b981', fontWeight: 700, fontSize: '1rem', margin: 0 }}>
+                    Vitals Saved & Synced ✓
+                  </p>
+                  <p style={{ color: '#64748b', fontSize: '0.8125rem', marginTop: 6 }}>
+                    +50 Longevity Points earned
+                  </p>
+                </motion.div>
+              ) : (
+                <form onSubmit={handleLogVitals}>
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 14, marginBottom: 16 }}>
+                    {[
+                      { key: 'heartRate',    label: 'Heart Rate',    unit: 'bpm',  type: 'number', min: 30,  max: 250 },
+                      { key: 'spo2',         label: 'SpO₂',          unit: '%',    type: 'number', min: 50,  max: 100 },
+                      { key: 'bp_systolic',  label: 'BP Systolic',   unit: 'mmHg', type: 'number', min: 50,  max: 300 },
+                      { key: 'bp_diastolic', label: 'BP Diastolic',  unit: 'mmHg', type: 'number', min: 20,  max: 200 },
+                      { key: 'glucose',      label: 'Blood Glucose', unit: 'mg/dL',type: 'number', min: 10,  max: 999 },
+                      { key: 'weight',       label: 'Weight',        unit: 'kg',   type: 'number', min: 1,   max: 400 },
+                      { key: 'temperature',  label: 'Temperature',   unit: '°C',   type: 'number', min: 30,  max: 45  },
+                    ].map(({ key, label, unit, type, min, max }) => (
+                      <div key={key}>
+                        <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                          {label} <span style={{ color: '#475569', fontWeight: 400 }}>({unit})</span>
+                        </label>
+                        <input
+                          type={type}
+                          min={min}
+                          max={max}
+                          value={vitalForm[key]}
+                          onChange={(e) => setVitalForm(prev => ({ ...prev, [key]: e.target.value }))}
+                          placeholder={`e.g. ${key === 'heartRate' ? '72' : key === 'spo2' ? '98' : key === 'bp_systolic' ? '120' : key === 'bp_diastolic' ? '80' : key === 'glucose' ? '95' : key === 'weight' ? '70' : '36.6'}`}
+                          style={{
+                            width: '100%', padding: '10px 12px', boxSizing: 'border-box',
+                            background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                            borderRadius: 10, color: '#f1f5f9', fontSize: '0.9375rem', fontFamily: 'inherit',
+                            outline: 'none', transition: 'border-color 0.15s',
+                          }}
+                          onFocus={(e) => e.target.style.borderColor = 'rgba(16,185,129,0.5)'}
+                          onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
+                        />
+                      </div>
+                    ))}
+                  </div>
+
+                  {/* Notes field — full width */}
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 600, color: '#94a3b8', marginBottom: 6, textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                      Notes <span style={{ color: '#475569', fontWeight: 400 }}>(optional)</span>
+                    </label>
+                    <textarea
+                      value={vitalForm.notes}
+                      onChange={(e) => setVitalForm(prev => ({ ...prev, notes: e.target.value }))}
+                      placeholder="e.g. Measured post-exercise, fasting state, morning reading..."
+                      rows={2}
+                      style={{
+                        width: '100%', padding: '10px 12px', boxSizing: 'border-box', resize: 'none',
+                        background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)',
+                        borderRadius: 10, color: '#f1f5f9', fontSize: '0.875rem', fontFamily: 'inherit', outline: 'none',
+                      }}
+                      onFocus={(e) => e.target.style.borderColor = 'rgba(16,185,129,0.5)'}
+                      onBlur={(e) => e.target.style.borderColor = 'rgba(255,255,255,0.08)'}
+                    />
+                  </div>
+
+                  {/* Recent history strip */}
+                  {vitalHistory.length > 0 && (
+                    <div style={{ marginBottom: 20, padding: '12px 14px', background: 'rgba(255,255,255,0.02)', borderRadius: 10, border: '1px solid rgba(255,255,255,0.05)' }}>
+                      <p style={{ margin: '0 0 8px', fontSize: '0.7rem', fontWeight: 600, color: '#64748b', textTransform: 'uppercase', letterSpacing: '0.06em' }}>
+                        Last recorded · {new Date(vitalHistory[0].measuredAt).toLocaleDateString()}
+                      </p>
+                      <div style={{ display: 'flex', gap: 16, flexWrap: 'wrap' }}>
+                        {vitalHistory[0].heartRate   && <span style={{ fontSize: '0.8rem', color: '#f43f5e' }}>❤ {vitalHistory[0].heartRate} bpm</span>}
+                        {vitalHistory[0].bp_systolic && <span style={{ fontSize: '0.8rem', color: '#60a5fa' }}>🩸 {vitalHistory[0].bp_systolic}/{vitalHistory[0].bp_diastolic} mmHg</span>}
+                        {vitalHistory[0].spo2        && <span style={{ fontSize: '0.8rem', color: '#10b981' }}>💨 {vitalHistory[0].spo2}% SpO₂</span>}
+                        {vitalHistory[0].glucose     && <span style={{ fontSize: '0.8rem', color: '#f59e0b' }}>🩸 {vitalHistory[0].glucose} mg/dL</span>}
+                      </div>
+                    </div>
+                  )}
+
+                  <motion.button
+                    type="submit"
+                    disabled={isSavingVital}
+                    whileHover={{ scale: isSavingVital ? 1 : 1.02 }}
+                    whileTap={{ scale: isSavingVital ? 1 : 0.98 }}
+                    style={{
+                      width: '100%', padding: '13px',
+                      background: isSavingVital ? '#374151' : 'linear-gradient(135deg, #10b981, #06b6d4)',
+                      color: 'white', border: 'none', borderRadius: 12, fontSize: '0.9375rem',
+                      fontWeight: 700, cursor: isSavingVital ? 'not-allowed' : 'pointer',
+                      display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
+                      boxShadow: isSavingVital ? 'none' : '0 8px 24px rgba(16,185,129,0.3)',
+                      transition: 'all 0.2s',
+                    }}
+                  >
+                    {isSavingVital
+                      ? <><Loader2 size={16} style={{ animation: 'spin 1s linear infinite' }} /> Saving to health record...</>
+                      : <><Save size={16} /> Save Vitals to Record</>
+                    }
+                  </motion.button>
+
+                  <p style={{ textAlign: 'center', fontSize: '0.7rem', color: '#374151', marginTop: 10 }}>
+                    🔒 Timestamp is server-generated · Stored in your encrypted health record
+                  </p>
+                </form>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       {/* Sub-Navigation for dashboard tabs */}
       {activeTab === 'dashboard' && (
