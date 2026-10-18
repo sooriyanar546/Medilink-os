@@ -28,12 +28,28 @@ export const GET = withRoleGuard(['ADMIN', 'NURSE', 'DOCTOR'], async (request, s
         where: { status: 'FLAGGED' },
       });
 
+      // Count completed consultations today as fallback
+      const completedToday = await tx.visit.count({
+        where: {
+          status: 'COMPLETED',
+          completedAt: { gte: today },
+        },
+      });
+
+      // Sum revenue from approved claims as fallback
+      const paidClaimsAgg = await tx.billingClaim.aggregate({
+        where: { paymentStatus: 'PAID' },
+        _sum: { amount: true },
+      });
+
       const isAdmin = role === 'ADMIN';
+      const consultationCount = todayMetric?.consultationCount ?? completedToday;
+      const revenueProtected = todayMetric?.revenueProtected ?? (paidClaimsAgg._sum.amount || 0);
 
       return {
         totalActivePatients: liveQueueCount,
-        consultationCount: todayMetric?.consultationCount ?? 0,
-        revenueProtected: isAdmin ? (todayMetric?.revenueProtected ?? 0) : 0,
+        consultationCount,
+        revenueProtected: isAdmin ? revenueProtected : 0,
         experienceScore: todayMetric?.experienceScore ?? 100,
         flaggedClaims: isAdmin ? flaggedClaims : 0,
       };

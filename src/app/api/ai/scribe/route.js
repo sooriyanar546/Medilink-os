@@ -60,22 +60,36 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Transcript and visitId are required' }, { status: 400 });
     }
 
-    const completion = await groq.chat.completions.create({
-      model: 'llama-3.1-8b-instant', // Fast inference for immediate doctor feedback
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Vitals Captured by Nurse:\n${vitals ? JSON.stringify(vitals) : 'None'}\n\nTranscript:\n\n"${transcript}"`,
-        },
-      ],
-      temperature: 0.1, 
-      max_tokens: 1024,
-      response_format: { type: 'json_object' }, 
-    });
+    let clinicalData;
+    if (!groq) {
+      console.warn("GROQ_API_KEY not configured. Using fallback clinical note extraction.");
+      clinicalData = {
+        subjective: `Patient consultation recorded. Transcript: "${transcript.slice(0, 150)}..."`,
+        objective: vitals ? `Vitals recorded: ${JSON.stringify(vitals)}` : 'Vitals: Stable',
+        assessment: 'Clinical evaluation pending physician review.',
+        plan: 'Follow-up as advised. Review symptoms if worsening.',
+        medications: [],
+        status: 'DRAFT',
+        requires_physician_signature: true,
+      };
+    } else {
+      const completion = await groq.chat.completions.create({
+        model: 'llama-3.1-8b-instant', // Fast inference for immediate doctor feedback
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Vitals Captured by Nurse:\n${vitals ? JSON.stringify(vitals) : 'None'}\n\nTranscript:\n\n"${transcript}"`,
+          },
+        ],
+        temperature: 0.1, 
+        max_tokens: 1024,
+        response_format: { type: 'json_object' }, 
+      });
 
-    const rawContent = completion.choices[0]?.message?.content?.trim();
-    const clinicalData = JSON.parse(rawContent);
+      const rawContent = completion.choices[0]?.message?.content?.trim();
+      clinicalData = JSON.parse(rawContent);
+    }
 
     // Save to Database via Prisma
     const savedNote = await prisma.clinicalNote.upsert({

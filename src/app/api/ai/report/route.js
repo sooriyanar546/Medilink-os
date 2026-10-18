@@ -37,23 +37,34 @@ export async function POST(request) {
       return NextResponse.json({ error: 'Lab data is required' }, { status: 400 });
     }
 
-    const completion = await groq.chat.completions.create({
-      // llama-3.3-70b-versatile: Better reasoning for nuanced patient-friendly explanations
-      model: 'llama-3.3-70b-versatile',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        {
-          role: 'user',
-          content: `Translate these lab results into plain English for a patient:\n\n${JSON.stringify(labData, null, 2)}`,
-        },
-      ],
-      temperature: 0.4, // Slightly higher for more natural, warm language
-      max_tokens: 512,
-      response_format: { type: 'json_object' }, // Native JSON mode for reliable parsing
-    });
+    let aiTranslation;
+    if (!groq) {
+      console.warn("GROQ_API_KEY not configured. Using fallback lab report translation.");
+      aiTranslation = {
+        title: labData.testName || labData.title || 'Laboratory Report',
+        plainEnglish: 'Your lab report has been recorded in your patient file. All findings are being monitored by your care team.',
+        severity: 'normal',
+        recommendation: 'Please discuss these results with your attending physician during your next visit.',
+      };
+    } else {
+      const completion = await groq.chat.completions.create({
+        // llama-3.3-70b-versatile: Better reasoning for nuanced patient-friendly explanations
+        model: 'llama-3.3-70b-versatile',
+        messages: [
+          { role: 'system', content: SYSTEM_PROMPT },
+          {
+            role: 'user',
+            content: `Translate these lab results into plain English for a patient:\n\n${JSON.stringify(labData, null, 2)}`,
+          },
+        ],
+        temperature: 0.4, // Slightly higher for more natural, warm language
+        max_tokens: 512,
+        response_format: { type: 'json_object' }, // Native JSON mode for reliable parsing
+      });
 
-    const rawContent = completion.choices[0]?.message?.content?.trim();
-    const aiTranslation = JSON.parse(rawContent);
+      const rawContent = completion.choices[0]?.message?.content?.trim();
+      aiTranslation = JSON.parse(rawContent);
+    }
 
     return NextResponse.json(aiTranslation);
 

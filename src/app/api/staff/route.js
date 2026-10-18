@@ -24,27 +24,32 @@ export async function GET(request) {
     const ward = searchParams.get('ward');
     const date = searchParams.get('date');
 
-    const shiftDate = date ? new Date(date) : new Date();
-    shiftDate.setHours(0, 0, 0, 0);
-    const shiftDateEnd = new Date(shiftDate);
-    shiftDateEnd.setHours(23, 59, 59, 999);
+    let whereClause = { isActive: true };
+
+    if (date || ward) {
+      const shiftDate = date ? new Date(date) : new Date();
+      shiftDate.setHours(0, 0, 0, 0);
+      const shiftDateEnd = new Date(shiftDate);
+      shiftDateEnd.setHours(23, 59, 59, 999);
+
+      whereClause.shifts = {
+        some: {
+          shiftStart: { gte: shiftDate },
+          shiftEnd: { lte: shiftDateEnd },
+          ...(ward && { ward }),
+        },
+      };
+    }
+
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
 
     const staff = await prisma.staffMember.findMany({
-      where: {
-        isActive: true,
-        shifts: {
-          some: {
-            shiftStart: { gte: shiftDate },
-            shiftEnd: { lte: shiftDateEnd },
-            ...(ward && { ward }),
-          },
-        },
-      },
+      where: whereClause,
       include: {
         shifts: {
           where: {
-            shiftStart: { gte: shiftDate },
-            shiftEnd: { lte: shiftDateEnd },
+            shiftStart: { gte: todayStart },
           },
           orderBy: { shiftStart: 'asc' },
         },
