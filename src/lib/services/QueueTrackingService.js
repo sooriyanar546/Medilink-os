@@ -19,8 +19,8 @@
  *   - ETA uses exponential smoothing to dampen velocity spikes from short samples
  */
 
-import { prisma } from '@/lib/prisma';
-import { pusherServer } from '@/lib/pusher';
+import { prisma } from '../prisma.js';
+import { pusherServer } from '../pusher.js';
 
 // ─── Stage Definitions ────────────────────────────────────────────────────────
 

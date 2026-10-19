@@ -368,15 +368,49 @@ export default function PatientMode() {
     });
   };
 
-  const handleSendMessage = (text = null) => {
+  const handleSendMessage = async (text = null) => {
     const userMsg = text || chatInput;
     if (!userMsg.trim()) return;
 
-    // Add user message
-    setChatHistory(prev => [...prev, { sender: 'user', text: userMsg, time: new Date() }]);
+    // Add user message immediately
+    const userItem = { sender: 'user', text: userMsg, time: new Date() };
+    setChatHistory(prev => [...prev, userItem]);
     setChatInput("");
 
-    // Generate bot reply with delay
+    // Try live MediBuddy API first
+    try {
+      const res = await fetch('/api/patient/medibuddy/chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          message: userMsg,
+          patientId,
+          conversationHistory: chatHistory.slice(-4).map(c => ({
+            role: c.sender === 'user' ? 'user' : 'assistant',
+            content: c.text
+          }))
+        })
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        setChatHistory(prev => [...prev, {
+          sender: 'bot',
+          text: data.reply,
+          isEmergency: data.isEmergency,
+          time: new Date()
+        }]);
+        if (data.isEmergency) {
+          showToast("🚨 Red Flag Alert: Emergency triage protocol triggered.", "error");
+          try { triggerNativeHaptic('heavy'); } catch (err) {}
+        }
+        return;
+      }
+    } catch (err) {
+      console.warn("MediBuddy online fetch failed, using fallback:", err);
+    }
+
+    // Client-side fallback if network error
     setTimeout(() => {
       const lower = userMsg.toLowerCase();
       let reply = "";
@@ -398,7 +432,7 @@ If you would like a personalized clinical meal plan, you can book an appointment
       }
 
       setChatHistory(prev => [...prev, { sender: 'bot', text: reply, time: new Date() }]);
-    }, 800);
+    }, 600);
   };
 
   const handleTriggerWhatsappReminder = async () => {
@@ -2071,6 +2105,34 @@ If you would like a personalized clinical meal plan, you can book an appointment
                                   onClick={async () => {
                                     showToast(`Booking request submitted for ${slot}!`, "info");
                                     setShowDietitians(false);
+
+                                    // Persist to backend dietitian booking API
+                                    try {
+                                      const tomorrow = new Date();
+                                      tomorrow.setDate(tomorrow.getDate() + 1);
+                                      const isPM = slot.includes('PM');
+                                      const parts = slot.replace(/[^\d:]/g, '').split(':');
+                                      let hour = parseInt(parts[0], 10);
+                                      if (isPM && hour < 12) hour += 12;
+                                      const minute = parseInt(parts[1] || '0', 10);
+                                      tomorrow.setHours(hour, minute, 0, 0);
+
+                                      await fetch('/api/patient/dietitian/book', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                          patientId,
+                                          dietitianName: d.name,
+                                          dietitianId: d.name.toLowerCase().includes('ananya') ? 'dt_ananya_sen' : 'dt_marcus_vance',
+                                          slotStart: tomorrow.toISOString(),
+                                          mode: 'TELEHEALTH',
+                                          notes: `Consultation for ${d.specialty}`
+                                        })
+                                      });
+                                    } catch (apiErr) {
+                                      console.warn('Dietitian backend booking non-fatal sync:', apiErr);
+                                    }
+
                                     setChatHistory(prev => [...prev, { 
                                       sender: 'bot', 
                                       text: `📅 Booking Confirmed! Your tele-consultation with ${d.name} has been scheduled for tomorrow at ${slot}. We have shared your active metabolic lab history and clinical record with them securely.`,

@@ -21,7 +21,7 @@
  * or treating physician before patient communication.
  */
 
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../prisma.js';
 
 // ─── Condition → Protocol Mapping ─────────────────────────────────────────────
 // Maps known diagnosis/condition keywords to primary and secondary protocols.

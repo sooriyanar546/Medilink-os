@@ -43,7 +43,7 @@ const GROQ_MODEL = 'llama-3.3-70b-versatile';
 
 // ─── Clinical Safety Disclaimer (mandatory — appended to every response) ──────
 
-const CLINICAL_SAFETY_DISCLAIMER =
+export const CLINICAL_SAFETY_DISCLAIMER =
   'This explanation is generated for educational purposes only and does not constitute medical advice or a clinical diagnosis. Always discuss your lab results with your treating physician before making any health decisions.';
 
 // ─── Biomarker Reference Ranges Database ─────────────────────────────────────

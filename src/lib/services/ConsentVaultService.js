@@ -24,7 +24,7 @@
  */
 
 import crypto from 'crypto';
-import { prisma } from '@/lib/prisma';
+import { prisma } from '../prisma.js';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 

@@ -1,4 +1,4 @@
-import prisma from '@/lib/prisma';
+import prisma from './prisma.js';
 
 export async function logAudit(userId, userName, role, action, patientId = null, details = null) {
   try {
