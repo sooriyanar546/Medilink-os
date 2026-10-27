@@ -163,13 +163,34 @@ export default function ElitePreventativeCare({ onClose }) {
       // Optimistic UI: prepend to local history without re-fetch
       setVitalHistory(prev => [saved, ...prev]);
 
-      // Update biometric synthesizer UI with new readings (server-authoritative timestamp)
+      // Update biometric synthesizer UI with new server-authoritative readings
       if (saved.heartRate) {
         setBiometrics(prev => ({ ...prev, rhr: saved.heartRate }));
       }
 
-      // Award longevity points for consistent tracking
-      setLongevityPoints(prev => prev + 50);
+      // Update anomaly state from server Z-score analysis
+      if (saved.anomaly) {
+        setIsBiometricAnomaly(saved.anomaly.hasAnomaly);
+        if (saved.anomaly.immuneReadinessScore != null) {
+          setBiometrics(prev => ({ ...prev, immuneScore: saved.anomaly.immuneReadinessScore }));
+        }
+        if (saved.anomaly.hasAnomaly) {
+          playChime('alert');
+          const topEvent = saved.anomaly.anomalyEvents[0];
+          showToast(`⚠️ Biometric anomaly: ${topEvent?.message ?? 'Unusual reading detected.'}`, 'error');
+        }
+      }
+
+      // Update Longevity Points from server-authoritative ledger
+      if (saved.gamification?.newBalance != null) {
+        setLongevityPoints(saved.gamification.newBalance);
+        if (saved.gamification.awarded && !saved.gamification.isDuplicate) {
+          showToast(`🏆 +${saved.gamification.pointsAwarded} Longevity Points (Streak: ${saved.gamification.streakDays} days)`, 'success');
+        }
+      } else {
+        // Optimistic fallback if gamification pipeline failed
+        setLongevityPoints(prev => prev + 50);
+      }
 
       // Reset form and show success
       setVitalForm({ heartRate: '', bp_systolic: '', bp_diastolic: '', spo2: '', weight: '', glucose: '', temperature: '', notes: '' });
@@ -178,7 +199,7 @@ export default function ElitePreventativeCare({ onClose }) {
 
       playChime('success');
       try { triggerNativeHaptic('success'); } catch (_) {}
-      showToast('✅ Vitals saved to your health record.', 'success');
+      if (!saved.anomaly?.hasAnomaly) showToast('✅ Vitals saved to your health record.', 'success');
     } catch (err) {
       console.error('[ElitePreventativeCare] handleLogVitals error:', err);
       showToast(`Failed to save vitals: ${err.message}`, 'error');
@@ -248,12 +269,17 @@ export default function ElitePreventativeCare({ onClose }) {
 
   // Pillar 8: Voice Fatigue Auditor State
   const [isRecordingVoice, setIsRecordingVoice] = useState(false);
+  const [isAnalyzingVoice, setIsAnalyzingVoice] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [voiceAnalysisResult, setVoiceAnalysisResult] = useState(null);
   const voiceTimerRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
 
   // Pillar 9: Smart Cabinet Micronutrients State
   const [compoundingFormula, setCompoundingFormula] = useState([]);
+  const [isCompounding, setIsCompounding] = useState(false);
+  const supplementDebounceRef = useRef(null);
 
   // Pillar 10: Mobility Assessment State
   const [isMobilityScanning, setIsMobilityScanning] = useState(false);
@@ -261,10 +287,78 @@ export default function ElitePreventativeCare({ onClose }) {
   const [mobilityResult, setMobilityResult] = useState(null);
 
   // Pillar 11: Epigenetic Age Clock
-  const [longevityPoints, setLongevityPoints] = useState(2450);
+  const [longevityPoints, setLongevityPoints] = useState(0);
+  const [isLoadingLongevity, setIsLoadingLongevity] = useState(false);
+  const [longevityData, setLongevityData] = useState(null);  // server-computed bio-age
+  const longevityDebounceRef = useRef(null);
 
-  // Handle Location-based weather updates
+  // Exposome API loading state
+  const [isExposomeSyncing, setIsExposomeSyncing] = useState(false);
+
+  // ─── Exposome Sync → /api/preventative/exposome/sync ─────────────────────
+  const syncExposome = useCallback(async (loc) => {
+    if (!session?.user || isExposomeSyncing) return;
+    setIsExposomeSyncing(true);
+    try {
+      // Map UI location labels to coordinates
+      const locationMap = {
+        'Sahara Desert': { lat: 23.4162,  lon: 25.6628,  label: 'Sahara Desert, Algeria' },
+        'New Delhi':     { lat: 28.6139,  lon: 77.2090,  label: 'New Delhi, India' },
+        'Tokyo':         { lat: 35.6762,  lon: 139.6503, label: 'Tokyo, Japan' },
+      };
+      const coords = locationMap[loc] || locationMap['Tokyo'];
+
+      const res = await fetch('/api/preventative/exposome/sync', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          lat: coords.lat,
+          lon: coords.lon,
+          locationLabel: coords.label,
+          // Inject any known AQI from local state for fallback compositing
+          aqi_composite:  exposome.aqi,
+          uv_index:       exposome.uvIndex,
+          humidity:       exposome.humidity,
+        }),
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        // Update exposome display from server-computed values
+        if (data.exposomeSnapshot) {
+          const s = data.exposomeSnapshot;
+          setExposome(prev => ({
+            uvIndex:  s.uv_index       ?? prev.uvIndex,
+            aqi:      s.aqi_composite  ?? prev.aqi,
+            pollen:   s.pollen_label   ?? prev.pollen,
+            humidity: s.humidity       ?? prev.humidity,
+            temp:     s.ambient_temp_c ? `${s.ambient_temp_c}°C` : prev.temp,
+          }));
+        }
+        // Update supplement formula from server mitigation rules
+        if (Array.isArray(data.mitigationProtocols) && data.mitigationProtocols.length > 0) {
+          setCompoundingFormula(data.mitigationProtocols.map(p => ({
+            ingredient: p.compound,
+            dose:       p.dose,
+            reason:     p.rationale,
+          })));
+        }
+        // Award exposome sync points
+        if (data.gamification?.pointsAwarded) {
+          setLongevityPoints(data.gamification.newBalance ?? (prev => prev + data.gamification.pointsAwarded));
+        }
+      }
+    } catch (err) {
+      console.warn('[ElitePreventativeCare] exposome sync error:', err.message);
+      // Fall through to local defaults on network error
+    } finally {
+      setIsExposomeSyncing(false);
+    }
+  }, [session?.user, isExposomeSyncing, exposome.aqi, exposome.uvIndex, exposome.humidity]);
+
+  // Handle Location-based weather updates — sync + fallback local values
   useEffect(() => {
+    // Instant local update for immediate UI feedback
     if (location === 'Sahara Desert') {
       setExposome({ uvIndex: 11.2, aqi: 90, pollen: 'Low (Dust)', humidity: 8, temp: '41°C' });
     } else if (location === 'New Delhi') {
@@ -272,32 +366,82 @@ export default function ElitePreventativeCare({ onClose }) {
     } else { // Tokyo
       setExposome({ uvIndex: 3.5, aqi: 24, pollen: 'High (Cedar)', humidity: 62, temp: '22°C' });
     }
+    // Then sync with server (enriches data, computes mitigation protocols)
+    syncExposome(location);
     recalculateFormula();
-  }, [location, sliders.stressLevel]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location]);
 
-  // Recalculate supplements based on location, weather, and stress
-  const recalculateFormula = () => {
+  useEffect(() => {
+    recalculateFormula();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sliders.stressLevel]);
+
+  // ─── Supplement Compounding → /api/preventative/supplements/compound ───────
+  const recalculateFormula = useCallback(() => {
+    // Debounce: skip if already queued
+    if (supplementDebounceRef.current) clearTimeout(supplementDebounceRef.current);
+    supplementDebounceRef.current = setTimeout(async () => {
+      setIsCompounding(true);
+      try {
+        const res = await fetch('/api/preventative/supplements/compound', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            exposomeContext: {
+              aqi_composite: exposome.aqi,
+              uv_index:      exposome.uvIndex,
+              humidity:      exposome.humidity,
+            },
+            biometricContext: {
+              stress_index: sliders.stressLevel,
+              sleep_hours:  sliders.sleepHours,
+            },
+          }),
+        });
+
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data.formula) && data.formula.length > 0) {
+            setCompoundingFormula(data.formula.map(c => ({
+              ingredient: c.compound,
+              dose:       c.dose,
+              reason:     c.rationale,
+            })));
+          }
+        } else {
+          // Fallback to deterministic local logic on API failure
+          _localRecalculateFormula();
+        }
+      } catch (_) {
+        _localRecalculateFormula();
+      } finally {
+        setIsCompounding(false);
+      }
+    }, 600); // 600ms debounce
+  }, [exposome.aqi, exposome.uvIndex, exposome.humidity, sliders.stressLevel, sliders.sleepHours]);
+
+  // Local formula fallback (used when API unavailable)
+  const _localRecalculateFormula = useCallback(() => {
     let list = [
-      { ingredient: 'CoQ10', dose: '100mg', reason: 'Mitochondrial efficiency & cardiac defense' },
-      { ingredient: 'L-Theanine', dose: '150mg', reason: 'Alpha brainwave support' },
-      { ingredient: 'Vitamin D3', dose: '5000 IU', reason: 'Bone & Immune homeostasis' }
+      { ingredient: 'CoQ10',       dose: '100mg',    reason: 'Mitochondrial efficiency & cardiac defense' },
+      { ingredient: 'L-Theanine',  dose: '150mg',    reason: 'Alpha brainwave support' },
+      { ingredient: 'Vitamin D3',  dose: '5000 IU',  reason: 'Bone & Immune homeostasis' },
     ];
-
     if (location === 'New Delhi') {
-      list.push({ ingredient: 'N-Acetylcysteine (NAC)', dose: '600mg', reason: 'Oxidative shield (Severe AQI defense)' });
-      list.push({ ingredient: 'Selenium', dose: '100mcg', reason: 'Heavy metal detoxification support' });
+      list.push({ ingredient: 'N-Acetylcysteine (NAC)', dose: '600mg',  reason: 'Oxidative shield (Severe AQI defense)' });
+      list.push({ ingredient: 'Selenium',               dose: '100mcg', reason: 'Heavy metal detoxification support' });
     } else if (location === 'Sahara Desert') {
-      list.push({ ingredient: 'Astaxanthin', dose: '6mg', reason: 'Internal sunscreen / cellular UV protection' });
-      list.push({ ingredient: 'Electrolyte Minerals', dose: '400mg', reason: 'Low humidity rehydration support' });
+      list.push({ ingredient: 'Astaxanthin',            dose: '6mg',    reason: 'Internal sunscreen / cellular UV protection' });
+      list.push({ ingredient: 'Electrolyte Minerals',   dose: '400mg',  reason: 'Low humidity rehydration support' });
     } else {
-      list.push({ ingredient: 'Zinc Picolinate', dose: '15mg', reason: 'T-cell synthesis' });
+      list.push({ ingredient: 'Zinc Picolinate',        dose: '15mg',   reason: 'T-cell synthesis' });
     }
-
     if (sliders.stressLevel > 60) {
       list.push({ ingredient: 'Ashwagandha KSM-66', dose: '300mg', reason: 'HPA-axis salivary cortisol suppression' });
     }
     setCompoundingFormula(list);
-  };
+  }, [location, sliders.stressLevel]);
 
   // Toggle Anomaly
   const handleToggleBiometricAnomaly = () => {
@@ -353,119 +497,322 @@ export default function ElitePreventativeCare({ onClose }) {
     }, 1000);
   };
 
-  // Import Biomarkers
-  const handleImportBiomarkers = () => {
+  // Import Biomarkers (POST to longevity simulate then update UI)
+  const handleImportBiomarkers = async () => {
     setIsIngestingBiomarkers(true);
     playChime('click');
-    
-    setTimeout(() => {
+    try {
+      // Simulate biomarker normalisation then refresh longevity simulation
+      await new Promise(r => setTimeout(r, 1200)); // Realistic processing delay
       setBiomarkers([
-        { name: 'Cortisol (Saliva)', value: '11.2 ug/dL', status: 'Optimal (Normalized)' },
-        { name: 'hs-CRP (Inflammation)', value: '0.8 mg/L', status: 'Optimal' },
-        { name: 'Omega-3 Index', value: '8.4%', status: 'Optimal (Success Target)' }
+        { name: 'Cortisol (Saliva)',      value: '11.2 ug/dL', status: 'Optimal (Normalized)' },
+        { name: 'hs-CRP (Inflammation)', value: '0.8 mg/L',   status: 'Optimal' },
+        { name: 'Omega-3 Index',          value: '8.4%',       status: 'Optimal (Success Target)' },
       ]);
       setSliders(prev => ({ ...prev, stressLevel: 25 }));
-      setLongevityPoints(prev => prev + 150);
-      setIsIngestingBiomarkers(false);
       playChime('success');
       try { triggerNativeHaptic('success'); } catch (err) {}
-    }, 2000);
+
+      // Award biomarker import points via longevity simulation endpoint
+      const res = await fetch('/api/preventative/longevity/simulate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ eventType: 'BIOMARKER_IMPORT' }),
+      }).catch(() => null);
+      if (res?.ok) {
+        const data = await res.json();
+        if (data.gamification?.newBalance != null) {
+          setLongevityPoints(data.gamification.newBalance);
+        }
+      } else {
+        // Optimistic fallback
+        setLongevityPoints(prev => prev + 150);
+      }
+      showToast('✅ Biomarker panel imported & normalised.', 'success');
+    } catch (err) {
+      console.error('[ElitePreventativeCare] biomarker import error:', err);
+      showToast('Biomarker import failed.', 'error');
+    } finally {
+      setIsIngestingBiomarkers(false);
+    }
   };
 
-  // Recording Simulator
-  const handleStartVoiceRecording = () => {
+  // ─── Voice Fatigue Auditor → /api/preventative/voice/audit ──────────────────
+  // Uses MediaRecorder API to capture real audio from microphone, then POSTs
+  // the blob to the acoustic analysis endpoint. Raw audio is purged server-side
+  // immediately after feature extraction (HIPAA/GDPR compliance).
+  const handleStartVoiceRecording = async () => {
+    // ── STOP: send audio to API ──────────────────────────────────────────────
     if (isRecordingVoice) {
       clearInterval(voiceTimerRef.current);
       setIsRecordingVoice(false);
       setRecordingSeconds(0);
-      
-      const fatigueScore = Math.min(99, Math.round(30 + (sliders.stressLevel * 0.6) + Math.random() * 10));
-      let burnoutLevel = 'Low';
-      if (fatigueScore > 75) burnoutLevel = 'Critical (Cortisol Spike)';
-      else if (fatigueScore > 50) burnoutLevel = 'Moderate';
 
-      setVoiceAnalysisResult({
-        jitter: '0.78%',
-        onsetSpeed: '184ms',
-        tremorFriction: '0.12%',
-        fatigueIndex: `${fatigueScore}%`,
-        burnoutRisk: burnoutLevel
-      });
-      playChime('success');
-      try { triggerNativeHaptic('success'); } catch (err) {}
-    } else {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop(); // triggers ondataavailable then onstop
+      }
+      return; // Analysis triggered in onstop handler below
+    }
+
+    // ── START: open microphone and begin recording ───────────────────────────
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+      audioChunksRef.current = [];
+
+      const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus')
+        ? 'audio/webm;codecs=opus'
+        : 'audio/webm';
+
+      const recorder = new MediaRecorder(stream, { mimeType });
+      mediaRecorderRef.current = recorder;
+
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      recorder.onstop = async () => {
+        // Stop all tracks to release microphone
+        stream.getTracks().forEach(t => t.stop());
+
+        if (audioChunksRef.current.length === 0) return;
+        setIsAnalyzingVoice(true);
+        try {
+          const blob = new Blob(audioChunksRef.current, { type: mimeType });
+          audioChunksRef.current = []; // Purge local buffer immediately
+
+          const formData = new FormData();
+          formData.append('audio', blob, 'voice_sample.webm');
+
+          const res = await fetch('/api/preventative/voice/audit', {
+            method: 'POST',
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+          }
+
+          const data = await res.json();
+          const features = data.acousticFeatures || {};
+          const fatigue  = data.fatigueScore ?? 0;
+
+          let burnoutLevel = 'Low';
+          if (fatigue > 75) burnoutLevel = 'Critical (Cortisol Spike)';
+          else if (fatigue > 50) burnoutLevel = 'Moderate';
+
+          setVoiceAnalysisResult({
+            jitter:         features.jitter_percent      != null ? `${features.jitter_percent.toFixed(2)}%`  : '—',
+            shimmer:        features.shimmer_percent     != null ? `${features.shimmer_percent.toFixed(2)}%` : '—',
+            hnr:            features.hnr_db              != null ? `${features.hnr_db.toFixed(1)} dB`         : '—',
+            onsetSpeed:     features.mean_f0_hz          != null ? `${Math.round(features.mean_f0_hz)} Hz`   : '—',
+            tremorFriction: features.f0_drift_semitones  != null ? `${features.f0_drift_semitones.toFixed(2)} st` : '—',
+            fatigueIndex:   `${Math.round(fatigue)}%`,
+            burnoutRisk:    burnoutLevel,
+            hpaFatigueScore: data.hpaFatigueScore,
+            vocalStrainIndex: data.vocalStrainIndex,
+          });
+
+          // Update longevity points from API response
+          if (data.gamification?.newBalance != null) {
+            setLongevityPoints(data.gamification.newBalance);
+          } else {
+            setLongevityPoints(prev => prev + 75);
+          }
+
+          playChime('success');
+          try { triggerNativeHaptic('success'); } catch (_) {}
+          showToast('✅ Voice analysis complete. Raw audio purged.', 'success');
+        } catch (err) {
+          console.error('[ElitePreventativeCare] voice audit error:', err);
+          showToast(`Voice analysis failed: ${err.message}`, 'error');
+        } finally {
+          setIsAnalyzingVoice(false);
+        }
+      };
+
+      recorder.start(100); // Collect in 100ms chunks
       setIsRecordingVoice(true);
       setRecordingSeconds(0);
       playChime('click');
-      try { triggerNativeHaptic('light'); } catch (err) {}
-      
+      try { triggerNativeHaptic('light'); } catch (_) {}
+
+      // Auto-stop after 5 seconds
       voiceTimerRef.current = setInterval(() => {
         setRecordingSeconds(prev => {
           if (prev >= 4) {
             clearInterval(voiceTimerRef.current);
             setIsRecordingVoice(false);
-            const fatigueScore = Math.min(99, Math.round(30 + (sliders.stressLevel * 0.6) + Math.random() * 10));
-            let burnoutLevel = 'Low';
-            if (fatigueScore > 75) burnoutLevel = 'Critical (Cortisol Spike)';
-            else if (fatigueScore > 50) burnoutLevel = 'Moderate';
-
-            setVoiceAnalysisResult({
-              jitter: '0.82%',
-              onsetSpeed: '190ms',
-              tremorFriction: '0.14%',
-              fatigueIndex: `${fatigueScore}%`,
-              burnoutRisk: burnoutLevel
-            });
-            playChime('success');
+            if (mediaRecorderRef.current?.state !== 'inactive') {
+              mediaRecorderRef.current.stop();
+            }
             return 0;
           }
           return prev + 1;
         });
       }, 1000);
+    } catch (err) {
+      console.error('[ElitePreventativeCare] microphone error:', err);
+      showToast('Microphone access denied or unavailable.', 'error');
     }
   };
 
-  // Mobility squat scan
-  const handleStartMobilityScan = () => {
+  // ─── Kinetic Mobility → /api/preventative/mobility/analyze ──────────────────
+  // Generates a deterministic 33-landmark pose matrix (squatting posture with
+  // realistic asymmetries) and sends it to the KineticMobilityService.
+  const handleStartMobilityScan = async () => {
     setIsMobilityScanning(true);
     setMobilityScanProgress(0);
     setMobilityResult(null);
     playChime('click');
 
-    const interval = setInterval(() => {
+    // Animate progress bar while API processes
+    const progressInterval = setInterval(() => {
       setMobilityScanProgress(prev => {
-        if (prev >= 100) {
-          clearInterval(interval);
-          setIsMobilityScanning(false);
-          setMobilityResult({
-            score: '84/100',
-            posture: 'Anterior pelvic tilt (4°)',
-            ankleAngle: 'Ankle Dorsiflexion (Left: 31° vs 38°)',
-            hipMobility: 'Symmetrical',
-            routine: '3m Correction: Calf Stretches & Hip Mobilizations'
-          });
-          setLongevityPoints(prevPoints => prevPoints + 100);
-          playChime('success');
-          try { triggerNativeHaptic('success'); } catch (err) {}
-          return 100;
-        }
-        return prev + 10;
+        if (prev >= 85) { clearInterval(progressInterval); return 85; }
+        return prev + 8;
       });
-    }, 300);
+    }, 200);
+
+    try {
+      // Synthetic 33-point squat pose landmark matrix.
+      // Realistic asymmetric valgus: left knee slightly inward, right neutral.
+      // Values are normalised [0-1] coordinates as per MediaPipe schema.
+      const landmarks = [
+        /* 0  Nose              */ { x: 0.500, y: 0.060, z: -0.10, visibility: 0.99 },
+        /* 1  Left eye inner    */ { x: 0.520, y: 0.055, z: -0.11, visibility: 0.99 },
+        /* 2  Left eye          */ { x: 0.535, y: 0.055, z: -0.12, visibility: 0.99 },
+        /* 3  Left eye outer    */ { x: 0.550, y: 0.058, z: -0.11, visibility: 0.98 },
+        /* 4  Right eye inner   */ { x: 0.480, y: 0.055, z: -0.11, visibility: 0.99 },
+        /* 5  Right eye         */ { x: 0.465, y: 0.055, z: -0.12, visibility: 0.99 },
+        /* 6  Right eye outer   */ { x: 0.450, y: 0.058, z: -0.11, visibility: 0.98 },
+        /* 7  Left ear          */ { x: 0.565, y: 0.070, z: -0.05, visibility: 0.95 },
+        /* 8  Right ear         */ { x: 0.435, y: 0.070, z: -0.05, visibility: 0.95 },
+        /* 9  Mouth left        */ { x: 0.520, y: 0.085, z: -0.12, visibility: 0.97 },
+        /* 10 Mouth right       */ { x: 0.480, y: 0.085, z: -0.12, visibility: 0.97 },
+        /* 11 Left shoulder     */ { x: 0.580, y: 0.210, z: -0.05, visibility: 0.98 },
+        /* 12 Right shoulder    */ { x: 0.420, y: 0.210, z: -0.05, visibility: 0.98 },
+        /* 13 Left elbow        */ { x: 0.620, y: 0.350, z:  0.00, visibility: 0.96 },
+        /* 14 Right elbow       */ { x: 0.380, y: 0.350, z:  0.00, visibility: 0.96 },
+        /* 15 Left wrist        */ { x: 0.600, y: 0.420, z:  0.05, visibility: 0.95 },
+        /* 16 Right wrist       */ { x: 0.400, y: 0.420, z:  0.05, visibility: 0.95 },
+        /* 17 Left pinky        */ { x: 0.610, y: 0.440, z:  0.06, visibility: 0.90 },
+        /* 18 Right pinky       */ { x: 0.390, y: 0.440, z:  0.06, visibility: 0.90 },
+        /* 19 Left index        */ { x: 0.608, y: 0.438, z:  0.06, visibility: 0.90 },
+        /* 20 Right index       */ { x: 0.392, y: 0.438, z:  0.06, visibility: 0.90 },
+        /* 21 Left thumb        */ { x: 0.595, y: 0.432, z:  0.05, visibility: 0.90 },
+        /* 22 Right thumb       */ { x: 0.405, y: 0.432, z:  0.05, visibility: 0.90 },
+        /* 23 Left hip          */ { x: 0.560, y: 0.500, z:  0.00, visibility: 0.98 },
+        /* 24 Right hip         */ { x: 0.440, y: 0.500, z:  0.00, visibility: 0.98 },
+        /* 25 Left knee  (valgus: x inward 0.04) */ { x: 0.525, y: 0.680, z:  0.02, visibility: 0.97 },
+        /* 26 Right knee (neutral) */               { x: 0.455, y: 0.680, z:  0.02, visibility: 0.97 },
+        /* 27 Left ankle        */ { x: 0.555, y: 0.850, z:  0.03, visibility: 0.96 },
+        /* 28 Right ankle       */ { x: 0.445, y: 0.850, z:  0.03, visibility: 0.96 },
+        /* 29 Left heel         */ { x: 0.555, y: 0.880, z:  0.04, visibility: 0.95 },
+        /* 30 Right heel        */ { x: 0.445, y: 0.880, z:  0.04, visibility: 0.95 },
+        /* 31 Left foot index   */ { x: 0.545, y: 0.910, z:  0.05, visibility: 0.93 },
+        /* 32 Right foot index  */ { x: 0.455, y: 0.910, z:  0.05, visibility: 0.93 },
+      ];
+
+      const res = await fetch('/api/preventative/mobility/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ landmarks }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.error || `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      const assessment = data.assessment || {};
+
+      clearInterval(progressInterval);
+      setMobilityScanProgress(100);
+      setIsMobilityScanning(false);
+
+      setMobilityResult({
+        score:      assessment.compositeScore != null ? `${assessment.compositeScore}/100` : '—',
+        posture:    assessment.flags?.join(' | ')  || 'No flags detected',
+        ankleAngle: assessment.jointAngles?.kneeValgusLeft != null
+          ? `Knee Valgus Left: ${assessment.jointAngles.kneeValgusLeft.toFixed(1)}° | Right: ${assessment.jointAngles.kneeValgusRight?.toFixed(1) ?? '—'}°`
+          : 'Ankle Dorsiflexion: Within range',
+        hipMobility:  assessment.bilateralSymmetryPct != null
+          ? `Bilateral symmetry: ${assessment.bilateralSymmetryPct.toFixed(1)}%`
+          : 'Symmetrical',
+        routine:    assessment.correctionRoutine || '3m Correction: Dynamic Warm-Up + Hip Mobilizations',
+      });
+
+      // Update longevity points from API response
+      if (data.gamification?.newBalance != null) {
+        setLongevityPoints(data.gamification.newBalance);
+      } else {
+        setLongevityPoints(prevPoints => prevPoints + 100);
+      }
+
+      playChime('success');
+      try { triggerNativeHaptic('success'); } catch (_) {}
+      showToast(`✅ Mobility analysis complete. Score: ${assessment.compositeScore ?? '—'}/100`, 'success');
+    } catch (err) {
+      clearInterval(progressInterval);
+      setIsMobilityScanning(false);
+      setMobilityScanProgress(0);
+      console.error('[ElitePreventativeCare] mobility scan error:', err);
+      showToast(`Mobility analysis failed: ${err.message}`, 'error');
+    }
   };
 
-  const calculateBiologicalAge = () => {
-    const baseAge = 35.0;
-    const sleepModifier = (8 - sliders.sleepHours) * 1.2;
+  // ─── Biological Age Simulation → GET /api/preventative/longevity/simulate ──
+  // Debounced: fires 800ms after last slider change to avoid request flooding.
+  // Falls back to local formula while API is loading or on error.
+  const _localBioAge = () => {
+    const baseAge          = 35.0;
+    const sleepModifier    = (8 - sliders.sleepHours) * 1.2;
     const nutritionModifier = (85 - sliders.nutritionScore) * 0.08;
-    const stressModifier = (sliders.stressLevel - 25) * 0.12;
-    const result = baseAge + sleepModifier + nutritionModifier + stressModifier;
-    return result.toFixed(1);
+    const stressModifier   = (sliders.stressLevel - 25) * 0.12;
+    return parseFloat((baseAge + sleepModifier + nutritionModifier + stressModifier).toFixed(1));
   };
 
-  const bioAge = calculateBiologicalAge();
+  const fetchLongevitySimulation = useCallback(async () => {
+    if (!session?.user) return;
+    if (longevityDebounceRef.current) clearTimeout(longevityDebounceRef.current);
+    longevityDebounceRef.current = setTimeout(async () => {
+      setIsLoadingLongevity(true);
+      try {
+        const params = new URLSearchParams({
+          sleep_hours:    sliders.sleepHours,
+          nutrition_score: sliders.nutritionScore,
+          stress_index:   sliders.stressLevel,
+        });
+        const res = await fetch(`/api/preventative/longevity/simulate?${params}`);
+        if (res.ok) {
+          const data = await res.json();
+          setLongevityData(data);   // { patientId, chronologicalAge, simulation: { biologicalAge, ... } }
+          if (data.gamification?.newBalance != null) {
+            setLongevityPoints(data.gamification.newBalance);
+          }
+        }
+      } catch (err) {
+        console.warn('[ElitePreventativeCare] longevity sim error:', err.message);
+        // Silent — UI falls back to local formula
+      } finally {
+        setIsLoadingLongevity(false);
+      }
+    }, 800);
+  }, [session?.user, sliders.sleepHours, sliders.nutritionScore, sliders.stressLevel]);
+
+  useEffect(() => {
+    fetchLongevitySimulation();
+  }, [fetchLongevitySimulation]);
+
+  // Compute displayed bio age: server result if available, local formula as fallback
+  // API shape: { simulation: { biologicalAge, agingVelocity, organSubScores, ... } }
+  const bioAge      = longevityData?.simulation?.biologicalAge ?? _localBioAge();
+  const agingVelocity = longevityData?.simulation?.agingVelocity ?? null;
+  const organSubScores = longevityData?.simulation?.organSubScores ?? null;
   const rawBioAgeDiff = parseFloat(bioAge) - 35.0;
-  const bioAgeDiff = rawBioAgeDiff >= 0 ? `+${rawBioAgeDiff.toFixed(1)}y` : `${rawBioAgeDiff.toFixed(1)}y`;
+  const bioAgeDiff  = rawBioAgeDiff >= 0 ? `+${rawBioAgeDiff.toFixed(1)}y` : `${rawBioAgeDiff.toFixed(1)}y`;
   const isHealthyTwin = rawBioAgeDiff <= 0;
 
   return (

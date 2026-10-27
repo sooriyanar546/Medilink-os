@@ -150,6 +150,12 @@ export const POST = withRoleGuard(['PATIENT', 'NURSE'], async (request, session)
     if (temperature   && (temperature < 30   || temperature > 45))   return NextResponse.json({ error: 'Temperature out of valid range (30–45°C)' }, { status: 422 });
     if (glucose       && (glucose < 1        || glucose > 1000))      return NextResponse.json({ error: 'Glucose out of valid range (1–1000 mg/dL)' }, { status: 422 });
 
+    // ── 1. Compute MAP (Mean Arterial Pressure) if BP present ─────────────────
+    const map = (bp_systolic && bp_diastolic)
+      ? computeMAP(parseInt(bp_systolic), parseInt(bp_diastolic))
+      : null;
+
+    // ── 2. Create VitalLog record (primary write) ──────────────────────────────
     const vitalLog = await withRLSContext(session, (tx) =>
       tx.vitalLog.create({
         data: {
@@ -169,6 +175,67 @@ export const POST = withRoleGuard(['PATIENT', 'NURSE'], async (request, session)
       })
     );
 
+    // ── 3. Post-save pipeline (concurrent, non-blocking to primary response) ──
+    const [gamificationResult, anomalyResult] = await Promise.allSettled([
+
+      // 3a. Award Longevity Points (idempotent, anti-gaming enforced)
+      awardLongevityPoints({
+        patientId,
+        eventType:   'VITAL_LOG',
+        refEntityId: vitalLog.id,
+      }),
+
+      // 3b. Biometric anomaly detection (only when heart-rate present for Z-score)
+      heartRate
+        ? synthesizeBiometrics({
+            patientId,
+            currentRhr:        parseInt(heartRate),
+            currentHrv:        body.hrv_rmssd    ? parseFloat(body.hrv_rmssd)    : 65,
+            currentSleepHours: body.sleep_hours  ? parseFloat(body.sleep_hours)  : 7,
+            currentRr:         body.respiratory_rate ? parseFloat(body.respiratory_rate) : undefined,
+          }).then(async (synthResult) => {
+            // 3c. Persist daily baseline to biometric_daily_baselines (fire-and-forget)
+            await persistDailyBaseline(patientId, synthResult.baselines).catch(() => {});
+            return synthResult;
+          })
+        : Promise.resolve(null),
+    ]);
+
+    // ── 4. Dual-write to partitioned vital_time_series ────────────────────────
+    // Non-critical — never block primary response on partition write failure
+    if (heartRate || bp_systolic || spo2 || body.hrv_rmssd) {
+      import('@/lib/prisma').then(({ default: p }) =>
+        p.$executeRaw`
+          INSERT INTO vital_time_series (
+            patient_id, recorded_by, measured_at,
+            heart_rate, bp_systolic, bp_diastolic, map,
+            hrv_rmssd, spo2, temperature_c, glucose,
+            weight_kg, respiratory_rate, sleep_hours,
+            source, vital_log_ref
+          ) VALUES (
+            ${patientId},
+            ${session.user.id},
+            ${vitalLog.measuredAt},
+            ${heartRate    ? parseInt(heartRate)    : null},
+            ${bp_systolic  ? parseInt(bp_systolic)  : null},
+            ${bp_diastolic ? parseInt(bp_diastolic) : null},
+            ${map},
+            ${body.hrv_rmssd         ? parseFloat(body.hrv_rmssd)         : null},
+            ${spo2         ? parseInt(spo2)         : null},
+            ${temperature  ? parseFloat(temperature): null},
+            ${glucose      ? parseFloat(glucose)    : null},
+            ${weight       ? parseFloat(weight)     : null},
+            ${body.respiratory_rate  ? parseFloat(body.respiratory_rate)  : null},
+            ${body.sleep_hours       ? parseFloat(body.sleep_hours)       : null},
+            ${userRole === 'NURSE' ? 'NURSE' : 'SELF'},
+            ${vitalLog.id}
+          )
+          ON CONFLICT DO NOTHING
+        `.catch((e) => console.warn('[vitals] vital_time_series dual-write failed (non-critical):', e.message))
+      ).catch(() => {});
+    }
+
+    // ── 5. Audit log ──────────────────────────────────────────────────────────
     await logAudit(
       session.user.id,
       session.user.name || 'Unknown',
@@ -179,10 +246,34 @@ export const POST = withRoleGuard(['PATIENT', 'NURSE'], async (request, session)
         vitalLogId: vitalLog.id,
         source: vitalLog.source,
         measuredAt: vitalLog.measuredAt,
+        map,
       }
     ).catch(console.error);
 
-    return NextResponse.json(vitalLog, { status: 201 });
+    // ── 6. Compose enriched response ──────────────────────────────────────────
+    const gamification = gamificationResult.status === 'fulfilled' && gamificationResult.value
+      ? {
+          pointsAwarded:   gamificationResult.value.pointsAwarded,
+          newBalance:      gamificationResult.value.newBalance,
+          streakDays:      gamificationResult.value.streakDays,
+          awarded:         gamificationResult.value.awarded,
+          isDuplicate:     gamificationResult.value.isDuplicate,
+          rejectionReason: gamificationResult.value.rejectionReason ?? null,
+        }
+      : null;
+
+    const anomaly = anomalyResult.status === 'fulfilled' && anomalyResult.value
+      ? {
+          hasAnomaly:          anomalyResult.value.hasAnomaly,
+          immuneReadinessScore: anomalyResult.value.immuneReadinessScore,
+          anomalyEvents:        anomalyResult.value.anomalyEvents,
+        }
+      : null;
+
+    return NextResponse.json(
+      { ...vitalLog, map, gamification, anomaly },
+      { status: 201 }
+    );
   } catch (error) {
     console.error('POST /api/vitals error:', error);
     return NextResponse.json({ error: 'Failed to create vital log' }, { status: 500 });
