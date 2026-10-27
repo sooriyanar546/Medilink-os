@@ -4,6 +4,10 @@ import { withRoleGuard, withAuth } from '@/lib/withRoleGuard';
 import { withRLSContext } from '@/lib/rlsContext';
 import { logAudit } from '@/lib/audit';
 import { checkRateLimit, rateLimitExceededResponse } from '@/lib/rateLimit';
+import { validatePhysiologicBounds } from '@/lib/middleware/preventativeCare';
+import { awardLongevityPoints } from '@/lib/services/VitalGamificationService';
+import { computeMAP } from '@/lib/services/LongevitySimulatorService';
+import { synthesizeBiometrics, persistDailyBaseline } from '@/lib/services/BiometricSynthesizerService';
 
 // ─── GET /api/vitals ─────────────────────────────────────────────────────────
 // Fetch vital log history for a patient.
