@@ -104,6 +104,7 @@ model Patient {
   consents        PatientConsent[]
   bed             WardBed?
   vitalLogs       VitalLog[]
+  appointments    Appointment[]
 }
 
 model Doctor {
@@ -118,6 +119,8 @@ model Doctor {
   // Relations
   user                User?
   visits              Visit[]
+  appointments        Appointment[]
+  schedules           DoctorSchedule[]
 }
 
 // ============================================================
@@ -503,4 +506,119 @@ model VitalLog {
 
   @@index([patientId, measuredAt])
   @@index([recordedBy])
+}
+
+// ============================================================
+// APPOINTMENT SCHEDULING (PHASE 16)
+// ============================================================
+
+enum AppointmentStatus {
+  PENDING
+  CONFIRMED
+  CHECKED_IN
+  COMPLETED
+  CANCELLED
+  NO_SHOW
+  RESCHEDULED
+}
+
+enum AppointmentType {
+  OPD
+  FOLLOWUP
+  PREVENTATIVE
+  EMERGENCY
+  TELECONSULT
+}
+
+model DoctorSchedule {
+  id                  String   @id @default(cuid())
+  doctorId            String
+  doctor              Doctor   @relation(fields: [doctorId], references: [id])
+  dayOfWeek           Int
+  startTime           String
+  endTime             String
+  slotDurationMinutes Int      @default(15)
+  maxPatientsPerSlot  Int      @default(1)
+  isActive            Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@unique([doctorId, dayOfWeek])
+  @@index([doctorId])
+}
+
+model Appointment {
+  id               String            @id @default(cuid())
+  patientId        String
+  patient          Patient           @relation(fields: [patientId], references: [id])
+  doctorId         String
+  doctor           Doctor            @relation(fields: [doctorId], references: [id])
+  scheduledAt      DateTime
+  durationMinutes  Int               @default(15)
+  status           AppointmentStatus @default(PENDING)
+  type             AppointmentType   @default(OPD)
+  department       String?
+  chiefComplaint   String?
+  notes            String?
+  reminderSent24h  Boolean           @default(false)
+  reminderSent1h   Boolean           @default(false)
+  cancelledAt      DateTime?
+  cancelReason     String?
+  visitId          String?           @unique
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+
+  @@index([patientId, scheduledAt])
+  @@index([doctorId, scheduledAt])
+  @@index([status])
+}
+
+// ============================================================
+// NOTIFICATION LOG (PHASE 18)
+// ============================================================
+
+enum NotificationChannel {
+  WHATSAPP
+  SMS
+  EMAIL
+  APP
+}
+
+enum NotificationStatus {
+  QUEUED
+  SENT
+  DELIVERED
+  FAILED
+  SKIPPED
+}
+
+enum NotificationType {
+  APPOINTMENT_CONFIRMED
+  APPOINTMENT_REMINDER_24H
+  APPOINTMENT_REMINDER_1H
+  APPOINTMENT_CANCELLED
+  APPOINTMENT_RESCHEDULED
+  QUEUE_POSITION_UPDATE
+  LAB_RESULT_READY
+  PRESCRIPTION_READY
+  GENERAL
+}
+
+model NotificationLog {
+  id              String              @id @default(cuid())
+  patientId       String?
+  phone           String?
+  channel         NotificationChannel
+  type            NotificationType
+  message         String              @db.Text
+  status          NotificationStatus  @default(QUEUED)
+  externalId      String?
+  errorMessage    String?
+  appointmentId   String?
+  createdAt       DateTime            @default(now())
+  updatedAt       DateTime            @updatedAt
+
+  @@index([patientId])
+  @@index([status])
+  @@index([createdAt])
 }
