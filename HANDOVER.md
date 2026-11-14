@@ -1,8 +1,9 @@
 # MediLink OS — Project Handover Document
 
-> **Generated**: 2026-11-14 | **Branch**: `main` | **Head**: `b93000a`  
+> **Generated**: 2026-11-14 | **Branch**: `main` | **Head**: `d888513`  
 > **Production**: https://web-lilac-five-58.vercel.app  
 > **Repository**: https://github.com/sooriyanar546/Medilink-os
+> **Test Status**: 26/26 Playwright regression tests passing (Chromium + Mobile iPhone 14)
 
 ---
 
@@ -44,7 +45,8 @@ web/
 │       ├── 001_rls_policies.sql        # PostgreSQL RLS
 │       ├── 002_mission_control_indexes.sql
 │       ├── 003_patient_portal_schema.sql
-│       └── 004_preventative_care_schema.sql
+│       ├── 004_preventative_care_schema.sql
+│       └── 005_appointments_notifications.sql
 ├── src/
 │   ├── app/
 │   │   ├── api/                        # 42 API route handlers
@@ -160,6 +162,8 @@ web/
 | Patient Portal Phase 2 | `11d2e5a` | API routes, consent/triage middleware, test suite |
 | **Preventative Care backend** | `d036372` | 15 service files, 5 API routes, DB migration 004, math scoring models |
 | **Preventative Care frontend** | `b93000a` | Frontend API wiring, vitals POST, gamification pipeline |
+| **Project Handover Document** | `b0b44c0` | Initial comprehensive HANDOVER.md documentation |
+| **Phase 16+18 Schema Foundation** | `d888513` | Appointment, DoctorSchedule, NotificationLog models + migration 005 |
 
 ---
 
@@ -172,6 +176,7 @@ web/
 | `002_mission_control_indexes.sql` | ✅ Applied | Performance indexes for Mission Control |
 | `003_patient_portal_schema.sql` | ✅ Applied | Patient portal schema extensions |
 | `004_preventative_care_schema.sql` | ✅ Applied | Preventative care tables (vitals, exposome, longevity) |
+| `005_appointments_notifications.sql` | 🟡 Ready | Appointments, doctor schedules, and notification log DDL |
 
 > `npx prisma migrate deploy` confirmed **"No pending migrations"** as of 2026-11-14.
 
@@ -237,6 +242,11 @@ cmd /c "npm run dev"
 cd "c:\Users\NEXGEN SYSTEMS\Desktop\hosopd antiG\web"
 run_tests.bat
 ```
+
+### Test Results Summary (Verified 2026-11-14)
+- **Status**: `26/26 passed (21.4s)` ✅
+- **Suites**: Chromium Desktop + Mobile Patient View (iPhone 14)
+- **Coverage**: Auth (R-01..R-03), RBAC (R-04..R-07), Validation (R-08..R-10), Security Headers (R-11..R-12), Rate Limiting (R-13)
 
 ### Known test behaviors
 
@@ -337,6 +347,8 @@ run_tests.bat
 ## 15. Git History (Full)
 
 ```
+d888513  feat(schema): add Appointment, DoctorSchedule, NotificationLog models for Phase 16+18
+b0b44c0  docs: add HANDOVER.md with full project state API surface and next-phase roadmap
 b93000a  feat(preventative-care): wire frontend API handlers and complete vitals POST gamification pipeline
 d036372  feat(preventative-care): complete backend service layer, mathematical scoring models, and API routes
 11d2e5a  feat(patient-portal): implement Phase 2 API routes, consent and triage middlewares, and test suite
@@ -367,3 +379,4 @@ c395cb0  Complete Admin Audit Logs, Kiosk Flow, and Doctor Workflow Integration
 ---
 
 *MediLink OS — Healthcare Operations Platform. Not a diagnosis system. Operational focus only.*
+
